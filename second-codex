@@ -275,6 +275,7 @@ classify_known_command() {
       ;;
     login)
       for token in "$@"; do
+        option_is_auth_mutation "$token" && { echo block; return; }
         [[ "$token" == status ]] && has_status=1
         token_is_setup_command "$token" && has_setup=1
       done
@@ -628,7 +629,7 @@ copy_session_between_homes() {
   local source_label="$4"
   local target_label="$5"
   local source_session_file
-  source_session_file="$(find_session_file_for_home "$source_home" "$session_id" "$source_label")"
+  source_session_file="$(find_session_file_for_home "$source_home" "$session_id" "$source_label")" || return $?
   local rel_path="${source_session_file#"$source_home/sessions/"}"
   if [[ "$rel_path" == "$source_session_file" ]]; then
     echo "second-codex internal error: session path is outside $source_label sessions directory" >&2
@@ -661,10 +662,21 @@ copy_session_between_homes() {
   printf '%s\n' "$target_session_file"
 }
 
+refuse_symlinked_history_target() {
+  local target_home="$1"
+  local target_label="$2"
+  local target_history="$target_home/history.jsonl"
+  if [[ -L "$target_history" ]]; then
+    echo "second-codex refused to append through symlinked $target_label history: $target_history" >&2
+    return 73
+  fi
+}
+
 append_history_line_between_homes() {
   local source_home="$1"
   local target_home="$2"
   local session_id="$3"
+  local target_label="${4:-target}"
   if ! is_valid_session_id "$session_id"; then
     echo "second-codex refused malformed session id: $session_id" >&2
     return 64
@@ -672,6 +684,7 @@ append_history_line_between_homes() {
   local source_history="$source_home/history.jsonl"
   local target_history="$target_home/history.jsonl"
   [[ -f "$source_history" ]] || return 0
+  refuse_symlinked_history_target "$target_home" "$target_label" || return $?
 
   local history_line
   history_line="$(grep -E "\"session_id\"[[:space:]]*:[[:space:]]*\"$session_id\"" "$source_history" | tail -n 1 || true)"
@@ -687,14 +700,15 @@ append_history_line_between_homes() {
 
 append_primary_history_line() {
   local session_id="$1"
-  append_history_line_between_homes "$B_HOME" "$A_HOME" "$session_id"
+  append_history_line_between_homes "$B_HOME" "$A_HOME" "$session_id" "primary"
 }
 
 import_primary_session_to_second() {
   local session_id="$1"
   local copied_session
+  refuse_symlinked_history_target "$B_HOME" "second account" || return $?
   copied_session="$(copy_session_between_homes "$A_HOME" "$B_HOME" "$session_id" "primary Codex" "second account")"
-  append_history_line_between_homes "$A_HOME" "$B_HOME" "$session_id"
+  append_history_line_between_homes "$A_HOME" "$B_HOME" "$session_id" "second account"
   cat >&2 <<EOF
 second-codex: imported primary Codex session into second account runtime: $session_id
 second-codex: copied_session=$copied_session
@@ -729,7 +743,7 @@ find_resume_session_arg() {
         return 1
         ;;
       *)
-        i=$((i + 1))
+        return 1
         ;;
     esac
   done
@@ -804,6 +818,7 @@ handoff_session() {
   fi
 
   local primary_session_file
+  refuse_symlinked_history_target "$A_HOME" "primary" || return $?
   primary_session_file="$(copy_session_between_homes "$B_HOME" "$A_HOME" "$session_id" "second account" "primary")"
   append_primary_history_line "$session_id"
 

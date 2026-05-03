@@ -297,4 +297,68 @@ fi
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/flagged-resume.out"
 cmp -s "$SANDBOX/home-a/sessions/$FLAGGED_RESUME_REL" "$SANDBOX/home-second/sessions/$FLAGGED_RESUME_REL"
 
+PROMPT_RESUME_SESSION_ID="00000000-0000-7000-8000-000000000009"
+PROMPT_RESUME_REL="2026/05/03/rollout-2026-05-03T19-11-47-$PROMPT_RESUME_SESSION_ID.jsonl"
+mkdir -p "$SANDBOX/prompt-home-a/sessions/2026/05/03" "$SANDBOX/prompt-home-a/memories" "$SANDBOX/prompt-home-a/memories_extensions" "$SANDBOX/prompt-home-second"
+cat > "$SANDBOX/prompt-home-a/config.toml" <<EOF
+model = "gpt-5.5"
+EOF
+ln -s "$SANDBOX/prompt-home-a/memories" "$SANDBOX/prompt-home-second/memories"
+ln -s "$SANDBOX/prompt-home-a/memories_extensions" "$SANDBOX/prompt-home-second/memories_extensions"
+cat > "$SANDBOX/prompt-home-a/history.jsonl" <<EOF
+{"session_id":"$PROMPT_RESUME_SESSION_ID","ts":1760000009,"text":"prompt primary work"}
+EOF
+cat > "$SANDBOX/prompt-home-a/sessions/$PROMPT_RESUME_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$PROMPT_RESUME_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/prompt-home-a" \
+SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
+"$REPO_ROOT/second-codex" exec resume "$PROMPT_RESUME_SESSION_ID" >"$SANDBOX/prompt-resume.out" 2>&1
+if grep -q "imported primary Codex session into second account runtime" "$SANDBOX/prompt-resume.out"; then
+  echo "FAIL prompt text triggered primary session import"
+  exit 1
+fi
+test ! -e "$SANDBOX/prompt-home-second/sessions/$PROMPT_RESUME_REL"
+
+HISTORY_SYMLINK_SESSION_ID="00000000-0000-7000-8000-000000000010"
+HISTORY_SYMLINK_REL="2026/05/03/rollout-2026-05-03T19-12-47-$HISTORY_SYMLINK_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-second/history.jsonl" <<EOF
+{"session_id":"$HISTORY_SYMLINK_SESSION_ID","ts":1760000010,"text":"history symlink work"}
+EOF
+cat > "$SANDBOX/home-second/sessions/$HISTORY_SYMLINK_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$HISTORY_SYMLINK_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+rm -f "$SANDBOX/home-a/history.jsonl"
+touch "$SANDBOX/outside-history.jsonl"
+ln -s "$SANDBOX/outside-history.jsonl" "$SANDBOX/home-a/history.jsonl"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "$HISTORY_SYMLINK_SESSION_ID" >"$SANDBOX/history-symlink.out" 2>&1; then
+  echo "FAIL handoff followed a target history symlink"
+  exit 1
+fi
+grep -q "refused to append through symlinked primary history" "$SANDBOX/history-symlink.out"
+test ! -s "$SANDBOX/outside-history.jsonl"
+test ! -e "$SANDBOX/home-a/sessions/$HISTORY_SYMLINK_REL"
+
+rm -f "$SANDBOX/home-a/history.jsonl"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "00000000-0000-7000-8000-000000000011" >"$SANDBOX/missing-source-session.out" 2>&1; then
+  echo "FAIL missing source session unexpectedly succeeded"
+  exit 1
+fi
+grep -q "could not find second account session file" "$SANDBOX/missing-source-session.out"
+if grep -q "internal error" "$SANDBOX/missing-source-session.out"; then
+  echo "FAIL missing source session was masked as internal error"
+  exit 1
+fi
+
 echo "PASS handoff sandbox"
