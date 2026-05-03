@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SANDBOX="${TMPDIR:-/tmp}/second-codex-classify-sandbox-$$"
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/second-codex-classify-sandbox.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 
 mkdir -p "$SANDBOX/home-a" "$SANDBOX/home-second"
@@ -31,22 +31,39 @@ run_wrapper() {
   "$REPO_ROOT/second-codex" "$@"
 }
 
+assert_grep() {
+  local pattern="$1"
+  local file="$2"
+  if ! grep -q "$pattern" "$file"; then
+    echo "FAIL missing pattern '$pattern' in $file" >&2
+    exit 1
+  fi
+}
+
+assert_missing_file() {
+  local file="$1"
+  if [[ -e "$file" ]]; then
+    echo "FAIL unexpected file exists: $file" >&2
+    exit 1
+  fi
+}
+
 if run_wrapper login >"$SANDBOX/login.out" 2>&1; then
   echo "FAIL login was not blocked"
   exit 1
 fi
-grep -q "refused this account/auth command" "$SANDBOX/login.out"
-test ! -f "$SANDBOX/codex.log"
+assert_grep "refused this account/auth command" "$SANDBOX/login.out"
+assert_missing_file "$SANDBOX/codex.log"
 
 run_wrapper login status
-grep -q "home=$SANDBOX/home-second args=login status" "$SANDBOX/codex.log"
+assert_grep "home=$SANDBOX/home-second args=login status" "$SANDBOX/codex.log"
 
 run_wrapper --config=model=gpt-5.5 mcp add parser-test -- /usr/bin/true >"$SANDBOX/reroute.out" 2>&1
-grep -q "rerouting environment/config change" "$SANDBOX/reroute.out"
-grep -q "home=$SANDBOX/home-a args=--config=model=gpt-5.5 mcp add parser-test -- /usr/bin/true" "$SANDBOX/codex.log"
+assert_grep "rerouting environment/config change" "$SANDBOX/reroute.out"
+assert_grep "home=$SANDBOX/home-a args=--config=model=gpt-5.5 mcp add parser-test -- /usr/bin/true" "$SANDBOX/codex.log"
 
 run_wrapper --enable goals features enable another-feature >"$SANDBOX/features.out" 2>&1
-grep -q "rerouting environment/config change" "$SANDBOX/features.out"
-grep -q "home=$SANDBOX/home-a args=--enable goals features enable another-feature" "$SANDBOX/codex.log"
+assert_grep "rerouting environment/config change" "$SANDBOX/features.out"
+assert_grep "home=$SANDBOX/home-a args=--enable goals features enable another-feature" "$SANDBOX/codex.log"
 
 echo "PASS classify sandbox"
