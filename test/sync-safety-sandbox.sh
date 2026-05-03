@@ -60,6 +60,19 @@ if run_wrapper "$SANDBOX/a-symlink" "$SANDBOX/real-second" >"$SANDBOX/a-symlink.
 fi
 grep -q "refused symlinked primary CODEX_HOME" "$SANDBOX/a-symlink.out"
 
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/real-primary" \
+  SECOND_CODEX_HOME="$SANDBOX/real-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
+  SECOND_CODEX_TEST_DISABLE_RSYNC=1 \
+  "$REPO_ROOT/second-codex" login status >"$SANDBOX/no-rsync.out" 2>&1; then
+  echo "FAIL missing rsync was not refused"
+  exit 1
+fi
+grep -q "requires rsync" "$SANDBOX/no-rsync.out"
+
 if run_wrapper "$SANDBOX/real-primary" "$SANDBOX/b-symlink" >"$SANDBOX/b-symlink.out" 2>&1; then
   echo "FAIL symlinked second CODEX_HOME was not refused"
   exit 1

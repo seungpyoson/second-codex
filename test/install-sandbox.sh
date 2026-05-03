@@ -53,6 +53,12 @@ if grep -Fq "installed-helper:_session-hint" "$SANDBOX/helper.log"; then
   exit 1
 fi
 
+: > "$SANDBOX/helper.log"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; second-codex --future value smoke-test' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
+grep -Fxq "installed-helper:--future value smoke-test" "$SANDBOX/helper.log"
+grep -Fq "installed-helper:_session-hint second " "$SANDBOX/helper.log"
+
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshrc.log" \
   zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/home/.zshrc"
 grep -Fxq "installed-helper:login status" "$SANDBOX/zshrc.log"
