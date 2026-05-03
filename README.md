@@ -35,17 +35,20 @@ Account/auth operations remain blocked. Run account/auth changes explicitly from
 After loading the shell helper:
 
 ```bash
+codex
 second-codex
 second-codex login status
 second-codex exec "Reply with exactly: second-codex ok"
 ```
+
+The shell helper wraps both `codex` and `second-codex`. After an interactive, prompt, `exec`, or `resume` run exits, it prints the most recent matching session id for the current directory. Setup/status commands such as `login status`, `mcp`, `features`, and `plugin` do not print session hints.
 
 ## Session Handoff
 
 If the second ChatGPT subscription hits a usage limit, hand off the current second-account session to primary Codex:
 
 ```bash
-second-codex handoff --last
+second-codex handoff --last --cwd "$PWD"
 codex resume <session_id>
 ```
 
@@ -54,7 +57,7 @@ codex resume <session_id>
 Use an explicit session id when needed:
 
 ```bash
-second-codex session-id
+second-codex session-id --second "$PWD"
 second-codex handoff <session_id>
 codex exec resume <session_id>
 ```

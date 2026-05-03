@@ -21,14 +21,30 @@ test "$(readlink "$SANDBOX/home/.codex-second/memories_extensions")" = "$SANDBOX
 
 cat > "$SANDBOX/install \"root/second-codex" <<'SH'
 #!/usr/bin/env bash
-printf 'installed-helper:%s\n' "$*" > "${SECOND_CODEX_INSTALL_HELPER_LOG:?missing log}"
+printf 'installed-helper:%s\n' "$*" >> "${SECOND_CODEX_INSTALL_HELPER_LOG:?missing log}"
 SH
 chmod 700 "$SANDBOX/install \"root/second-codex"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
+grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
+
+mkdir -p "$SANDBOX/bin"
+cat > "$SANDBOX/bin/codex" <<'SH'
+#!/usr/bin/env bash
+printf 'primary-codex:%s\n' "$*" >> "${SECOND_CODEX_INSTALL_HELPER_LOG:?missing log}"
+SH
+chmod 700 "$SANDBOX/bin/codex"
+PATH="$SANDBOX/bin:$PATH" \
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; codex login status' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
+grep -Fxq "primary-codex:login status" "$SANDBOX/helper.log"
+
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -c 'source "$1"; second-codex smoke-test' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
 grep -Fxq "installed-helper:smoke-test" "$SANDBOX/helper.log"
+grep -Fq "installed-helper:_session-hint second " "$SANDBOX/helper.log"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshrc.log" \
-  zsh -c 'source "$1"; second-codex zshrc-smoke-test' _ "$SANDBOX/home/.zshrc"
-grep -Fxq "installed-helper:zshrc-smoke-test" "$SANDBOX/zshrc.log"
+  zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/home/.zshrc"
+grep -Fxq "installed-helper:login status" "$SANDBOX/zshrc.log"
 
 echo "PASS install sandbox"
