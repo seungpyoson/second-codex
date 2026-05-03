@@ -300,18 +300,25 @@ auth_status() {
     echo "logged in"
     return 0
   fi
-  python3 - "$auth_file" <<'PY'
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "logged in (python3 missing)"
+    return 0
+  fi
+  python3 - "$auth_file" <<'PY' 2>/dev/null || echo "unknown"
 import base64, json, sys
 from pathlib import Path
-data = json.loads(Path(sys.argv[1]).read_text())
-token = (data.get("tokens") or {}).get("id_token") or ""
-if token.count(".") < 2:
+try:
+    data = json.loads(Path(sys.argv[1]).read_text())
+    token = (data.get("tokens") or {}).get("id_token") or ""
+    if token.count(".") < 2:
+        print("unknown")
+        raise SystemExit
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload))
+    print(claims.get("email") or "unknown")
+except Exception:
     print("unknown")
-    raise SystemExit
-payload = token.split(".")[1]
-payload += "=" * (-len(payload) % 4)
-claims = json.loads(base64.urlsafe_b64decode(payload))
-print(claims.get("email") or "unknown")
 PY
 }
 
@@ -365,7 +372,8 @@ doctor() {
     failed=1
   fi
 
-  local block_out
+  local block_out=""
+  trap 'rm -f "${block_out:-}"' RETURN
   block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
   if "$WRAPPER_PATH" mcp logout doctor-auth-check >"$block_out" 2>&1; then
     echo "FAIL account/auth command was not blocked"
@@ -377,6 +385,8 @@ doctor() {
     failed=1
   fi
   rm -f "$block_out"
+  block_out=""
+  trap - RETURN
 
   return "$failed"
 }
