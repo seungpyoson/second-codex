@@ -104,12 +104,12 @@ unknown_entries() {
   local home="$1"
   [[ -d "$home" ]] || return 0
   local path name
-  while IFS= read -r path; do
+  while IFS= read -r -d '' path; do
     name="${path##*/}"
     matches_any_pattern "$name" "${ACCOUNT_PATTERNS[@]}" && continue
     matches_any_pattern "$name" "${ENVIRONMENT_PATTERNS[@]}" && continue
     printf '%s\n' "$name"
-  done < <(find "$home" -mindepth 1 -maxdepth 1 -print | sort)
+  done < <(find "$home" -mindepth 1 -maxdepth 1 -print0)
 }
 
 fail_on_unknown_entries() {
@@ -192,10 +192,10 @@ home_has_environment_sentinel() {
   local home="$1"
   local path name
   [[ -d "$home" ]] || return 1
-  while IFS= read -r path; do
+  while IFS= read -r -d '' path; do
     name="${path##*/}"
     matches_any_pattern "$name" "${ENVIRONMENT_PATTERNS[@]}" && return 0
-  done < <(find "$home" -mindepth 1 -maxdepth 1 -print | sort)
+  done < <(find "$home" -mindepth 1 -maxdepth 1 -print0)
   return 1
 }
 
@@ -539,11 +539,11 @@ find_session_file_for_home() {
   }
   local session_file=""
   local candidate
-  while IFS= read -r candidate; do
+  while IFS= read -r -d '' candidate; do
     if session_file_contains_id "$candidate" "$session_id"; then
       session_file="$candidate"
     fi
-  done < <(find "$sessions_dir" -type f -name "*$session_id*.jsonl" -print | sort)
+  done < <(find "$sessions_dir" -type f -name "*$session_id*.jsonl" -print0)
   [[ -n "$session_file" ]] || {
     echo "second-codex could not find $label session file for: $session_id" >&2
     return 67
@@ -555,6 +555,25 @@ session_file_contains_id() {
   local session_file="$1"
   local session_id="$2"
   local line
+  if [[ "${SECOND_CODEX_TEST_DISABLE_PYTHON3:-0}" != "1" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$session_file" "$session_id" <<'PY' 2>/dev/null && return 0
+import json, sys
+from pathlib import Path
+
+text = "".join(Path(sys.argv[1]).read_text(errors="replace").splitlines(True)[:25]).lstrip()
+session_id = sys.argv[2]
+decoder = json.JSONDecoder()
+while text:
+    try:
+        obj, end = decoder.raw_decode(text)
+    except json.JSONDecodeError:
+        break
+    if obj.get("type") == "session_meta" and (obj.get("payload") or {}).get("id") == session_id:
+        raise SystemExit(0)
+    text = text[end:].lstrip()
+raise SystemExit(1)
+PY
+  fi
   while IFS= read -r line; do
     case "$line" in
       *'"type"'*'"session_meta"'*|*'"session_meta"'*'"type"'*)
@@ -743,6 +762,10 @@ handoff_session() {
         shift 2
         ;;
       --last)
+        if [[ "$requested" != "--last" ]]; then
+          echo "second-codex handoff: cannot combine an explicit session id with --last" >&2
+          return 64
+        fi
         requested="--last"
         shift
         ;;
@@ -814,11 +837,13 @@ session_hint() {
 
   local hint_error
   hint_error="$(mktemp "${TMPDIR:-/tmp}/second-codex-hint.XXXXXX")"
+  trap 'rm -f "$hint_error"' RETURN
   session_id="$(latest_session_id_for_home "$home" "$cwd_filter" 2>"$hint_error" || true)"
   if [[ -z "$session_id" ]] && grep -q "python3 not found" "$hint_error"; then
     cat "$hint_error"
   fi
   rm -f "$hint_error"
+  trap - RETURN
   [[ -n "$session_id" ]] || return 0
   resume="codex resume $session_id"
   handoff="second-codex handoff $session_id && $resume"

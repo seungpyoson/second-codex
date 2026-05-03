@@ -105,6 +105,16 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "$OTHER_SESSION_ID" --last >"$SANDBOX/id-plus-last.out" 2>&1; then
+  echo "FAIL handoff allowed explicit session id with --last"
+  exit 1
+fi
+grep -q "cannot combine an explicit session id with --last" "$SANDBOX/id-plus-last.out"
+
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
   "$REPO_ROOT/second-codex" handoff "../../bad" >"$SANDBOX/bad-id.out" 2>&1; then
   echo "FAIL malformed handoff session id was not refused"
   exit 1
@@ -142,6 +152,28 @@ SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 "$REPO_ROOT/second-codex" handoff "$ATTACK_SESSION_ID" >"$SANDBOX/collision.out"
 cmp -s "$SANDBOX/home-second/sessions/$ATTACK_REL" "$SANDBOX/home-a/sessions/$ATTACK_REL"
 test ! -e "$SANDBOX/home-a/sessions/$ATTACK_COLLISION_REL"
+
+PRETTY_SESSION_ID="00000000-0000-7000-8000-000000000008"
+PRETTY_REL="2026/05/03/rollout-2026-05-03T19-10-47-$PRETTY_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-second/history.jsonl" <<EOF
+{"session_id":"$PRETTY_SESSION_ID","ts":1760000008,"text":"pretty session work"}
+EOF
+cat > "$SANDBOX/home-second/sessions/$PRETTY_REL" <<EOF
+{
+  "type": "session_meta",
+  "payload": {
+    "id": "$PRETTY_SESSION_ID",
+    "cwd": "/tmp/project"
+  }
+}
+{"type":"turn_context","payload":{"cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+"$REPO_ROOT/second-codex" handoff "$PRETTY_SESSION_ID" >"$SANDBOX/pretty.out"
+cmp -s "$SANDBOX/home-second/sessions/$PRETTY_REL" "$SANDBOX/home-a/sessions/$PRETTY_REL"
 
 SYMLINK_TARGET_SESSION_ID="00000000-0000-7000-8000-000000000005"
 SYMLINK_TARGET_REL="2026/05/03/rollout-2026-05-03T19-07-47-$SYMLINK_TARGET_SESSION_ID.jsonl"
