@@ -66,6 +66,13 @@ assert_rerouted() {
   assert_grep "home=$SANDBOX/home-a args=$*" "$SANDBOX/codex.log"
 }
 
+assert_second() {
+  local name="$1"
+  shift
+  run_wrapper "$@" >"$SANDBOX/$name.out" 2>&1
+  assert_grep "home=$SANDBOX/home-second args=$*" "$SANDBOX/codex.log"
+}
+
 if run_wrapper login >"$SANDBOX/login.out" 2>&1; then
   echo "FAIL login was not blocked"
   exit 1
@@ -81,6 +88,16 @@ assert_blocked skill-marketplace-login skill marketplace login
 assert_blocked app-marketplace-login app marketplace login
 assert_blocked features-login features login
 assert_blocked upgrade upgrade
+assert_blocked flag-login --login=user@example.com chat
+assert_blocked flag-auth-token --auth-token=abcdef chat
+assert_blocked flag-oauth --oauth-redirect=http://example.test chat
+
+assert_second exec-login-prompt exec please write a login form
+assert_second exec-auth-token-prompt exec rotate the auth token
+assert_second exec-mcp-prompt exec how does mcp work
+assert_second exec-update-prompt exec update the changelog
+assert_second bare-update-prompt help me update the plugin config
+assert_second separator-prompt -- login
 
 run_wrapper login status
 assert_grep "home=$SANDBOX/home-second args=login status" "$SANDBOX/codex.log"

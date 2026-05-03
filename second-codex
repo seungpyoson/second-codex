@@ -21,6 +21,17 @@ Run account/auth changes explicitly from the intended Codex account.
 EOF
 }
 
+option_takes_value() {
+  case "$1" in
+    -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 find_manifest() {
   local script_dir
   script_dir="$(cd "$(dirname "$WRAPPER_PATH")" && pwd)"
@@ -145,7 +156,7 @@ reroute_notice() {
 }
 
 is_valid_session_id() {
-  [[ "$1" =~ ^[0-9A-Fa-f-]{36}$ ]]
+  [[ "$1" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
 }
 
 refuse_symlink_home() {
@@ -155,6 +166,26 @@ refuse_symlink_home() {
     echo "second-codex refused symlinked $label CODEX_HOME: $home" >&2
     return 73
   fi
+}
+
+refuse_same_homes() {
+  if [[ "$A_HOME" == "$B_HOME" ]]; then
+    echo "second-codex refused to run because primary and second CODEX_HOME are the same: $A_HOME" >&2
+    return 64
+  fi
+}
+
+guard_home_roots() {
+  refuse_symlink_home "primary" "$A_HOME"
+  refuse_symlink_home "second" "$B_HOME"
+  refuse_same_homes
+}
+
+guard_manifest_homes() {
+  load_manifest
+  guard_home_roots
+  fail_on_unknown_entries "primary" "$A_HOME"
+  fail_on_unknown_entries "second" "$B_HOME"
 }
 
 home_has_environment_sentinel() {
@@ -179,61 +210,136 @@ EOF
   return 65
 }
 
-classify_command() {
-  local has_mcp=0 has_plugin=0 has_managed=0 has_features=0 has_trust=0 has_config=0
-  local has_login=0 has_status=0 has_logout=0 has_auth=0 has_oauth=0 has_token=0 has_refresh=0
-  local has_update=0 has_upgrade=0
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      mcp) has_mcp=1 ;;
-      plugin|plugins) has_plugin=1; has_managed=1 ;;
-      skill|skills|app|apps) has_managed=1 ;;
-      features) has_features=1 ;;
-      trust|untrust) has_trust=1 ;;
-      config|configure) has_config=1 ;;
-      login) has_login=1 ;;
-      status) has_status=1 ;;
-      logout) has_logout=1 ;;
-      auth) has_auth=1 ;;
-      oauth) has_oauth=1 ;;
-      token) has_token=1 ;;
-      refresh) has_refresh=1 ;;
-      update) has_update=1 ;;
-      upgrade) has_upgrade=1 ;;
-    esac
-  done
+token_is_auth_mutation() {
+  case "$1" in
+    login|logout|auth|oauth|token|refresh|signout|sign-out|deauth|reauth|verify-auth)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
-  if (( has_logout || has_auth || has_oauth || has_token || has_refresh )); then
-    echo block
-    return
-  fi
-  if (( has_login )); then
-    if (( has_status && ! has_mcp && ! has_plugin && ! has_managed && ! has_features && ! has_config )); then
+option_is_auth_mutation() {
+  case "$1" in
+    --*login*|--*logout*|--*auth*|--*oauth*|--*token*|--*refresh*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+token_is_setup_command() {
+  case "$1" in
+    mcp|plugin|plugins|skill|skills|app|apps|features|trust|untrust|config|configure)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+token_is_runtime_mutation() {
+  case "$1" in
+    update|upgrade)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+classify_known_command() {
+  local command="$1"
+  shift || true
+  local has_status=0 has_setup=0 token
+
+  case "$command" in
+    exec|resume|chat)
       echo second
       return
-    fi
-    echo block
-    return
-  fi
-  if (( has_update || has_upgrade )); then
-    if (( has_mcp || has_managed || has_features || has_config )); then
-      echo reroute
+      ;;
+    login)
+      for token in "$@"; do
+        [[ "$token" == status ]] && has_status=1
+        token_is_setup_command "$token" && has_setup=1
+      done
+      if (( has_status && ! has_setup )); then
+        echo second
+      else
+        echo block
+      fi
       return
-    fi
+      ;;
+    update|upgrade)
+      echo block
+      return
+      ;;
+  esac
+
+  if token_is_auth_mutation "$command"; then
     echo block
     return
   fi
-  if (( has_mcp || has_managed || has_features || has_trust || has_config )); then
+
+  if token_is_setup_command "$command"; then
+    for token in "$@"; do
+      token_is_auth_mutation "$token" && { echo block; return; }
+    done
     echo reroute
     return
   fi
+
+  echo second
+}
+
+classify_command() {
+  local args=("$@")
+  local i=0 saw_ambiguous_option=0 arg
+  while (( i < ${#args[@]} )); do
+    arg="${args[$i]}"
+    case "$arg" in
+      --)
+        echo second
+        return
+        ;;
+      --*=*)
+        option_is_auth_mutation "$arg" && { echo block; return; }
+        i=$((i + 1))
+        ;;
+      -*)
+        option_is_auth_mutation "$arg" && { echo block; return; }
+        if option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
+          i=$((i + 2))
+        else
+          saw_ambiguous_option=1
+          i=$((i + 1))
+        fi
+        ;;
+      *)
+        if token_is_auth_mutation "$arg" || token_is_setup_command "$arg" || token_is_runtime_mutation "$arg" || [[ "$arg" == exec || "$arg" == resume || "$arg" == chat ]]; then
+          classify_known_command "$arg" "${args[@]:$((i + 1))}"
+          return
+        fi
+        if (( saw_ambiguous_option )); then
+          i=$((i + 1))
+          continue
+        fi
+        echo second
+        return
+        ;;
+    esac
+  done
   echo second
 }
 
 sync_projection() {
-  refuse_symlink_home "primary" "$A_HOME"
-  refuse_symlink_home "second" "$B_HOME"
+  guard_home_roots
   mkdir -p "$A_HOME" "$B_HOME"
   fail_on_unknown_entries "primary" "$A_HOME"
   fail_on_unknown_entries "second" "$B_HOME"
@@ -421,13 +527,32 @@ find_session_file_for_home() {
     echo "second-codex could not find $label sessions directory: $sessions_dir" >&2
     return 67
   }
-  local session_file
-  session_file="$(find "$sessions_dir" -type f -name "*$session_id*.jsonl" -print | sort | tail -n 1 || true)"
+  local session_file=""
+  local candidate
+  while IFS= read -r candidate; do
+    if session_file_contains_id "$candidate" "$session_id"; then
+      session_file="$candidate"
+    fi
+  done < <(find "$sessions_dir" -type f -name "*$session_id*.jsonl" -print | sort)
   [[ -n "$session_file" ]] || {
     echo "second-codex could not find $label session file for: $session_id" >&2
     return 67
   }
   printf '%s\n' "$session_file"
+}
+
+session_file_contains_id() {
+  local session_file="$1"
+  local session_id="$2"
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      *'"type"'*'"session_meta"'*|*'"session_meta"'*'"type"'*)
+        printf '%s\n' "$line" | grep -Eq "\"id\"[[:space:]]*:[[:space:]]*\"$session_id\"" && return 0
+        ;;
+    esac
+  done < <(sed -n '1,25p' "$session_file")
+  return 1
 }
 
 session_file_exists_for_home() {
@@ -457,7 +582,11 @@ copy_session_between_homes() {
   fi
   local target_session_file="$target_home/sessions/$rel_path"
   mkdir -p "$(dirname "$target_session_file")"
-  if [[ -e "$target_session_file" ]]; then
+  if [[ -L "$target_session_file" ]]; then
+    echo "second-codex refused to overwrite symlink: $target_session_file" >&2
+    return 73
+  fi
+  if [[ -e "$target_session_file" || -L "$target_session_file" ]]; then
     if ! cmp -s "$source_session_file" "$target_session_file"; then
       echo "second-codex refused to overwrite different $target_label session file: $target_session_file" >&2
       return 73
@@ -605,7 +734,13 @@ session_hint() {
       ;;
   esac
 
-  session_id="$(latest_session_id_for_home "$home" "$cwd_filter" 2>/dev/null || true)"
+  local hint_error
+  hint_error="$(mktemp "${TMPDIR:-/tmp}/second-codex-hint.XXXXXX")"
+  session_id="$(latest_session_id_for_home "$home" "$cwd_filter" 2>"$hint_error" || true)"
+  if [[ -z "$session_id" ]] && grep -q "python3 not found" "$hint_error"; then
+    cat "$hint_error"
+  fi
+  rm -f "$hint_error"
   [[ -n "$session_id" ]] || return 0
   resume="codex resume $session_id"
   handoff="second-codex handoff $session_id && $resume"
@@ -653,6 +788,14 @@ EOF
 auth_status() {
   local auth_file="$1/auth.json"
   [[ -f "$auth_file" ]] || { echo "not logged in"; return 0; }
+  [[ -s "$auth_file" ]] || { echo "corrupt auth file"; return 0; }
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$auth_file" <<'PY' >/dev/null 2>&1 || { echo "corrupt auth file"; return 0; }
+import json, sys
+from pathlib import Path
+json.loads(Path(sys.argv[1]).read_text())
+PY
+  fi
   if [[ "${SECOND_CODEX_DOCTOR_SHOW_EMAIL:-0}" != "1" ]]; then
     echo "logged in"
     return 0
@@ -764,16 +907,19 @@ main() {
   case "${1:-}" in
     _session-hint)
       shift
+      guard_home_roots
       session_hint "$@"
       return
       ;;
     handoff)
       shift
+      guard_manifest_homes
       handoff_session "$@"
       return
       ;;
     session-id)
       shift
+      guard_manifest_homes
       case "${1:-}" in
         --primary)
           latest_session_id_for_home "$A_HOME" "${2:-}"
@@ -794,8 +940,7 @@ main() {
   esac
 
   load_manifest
-  refuse_symlink_home "primary" "$A_HOME"
-  refuse_symlink_home "second" "$B_HOME"
+  guard_home_roots
   ensure_shared_paths
   ensure_shim
 

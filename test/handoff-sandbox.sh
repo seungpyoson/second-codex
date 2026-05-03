@@ -63,6 +63,14 @@ SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
 SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_TEST_DISABLE_PYTHON3=1 \
+"$REPO_ROOT/second-codex" _session-hint second /tmp/project >"$SANDBOX/no-python-hint.out"
+grep -q "python3 not found" "$SANDBOX/no-python-hint.out"
+
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 "$REPO_ROOT/second-codex" handoff --last --cwd /tmp/project > "$SANDBOX/handoff.out"
 
 grep -Fxq "session_id=$SESSION_ID" "$SANDBOX/handoff.out"
@@ -92,6 +100,96 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   exit 1
 fi
 grep -q "refused malformed session id" "$SANDBOX/bad-id.out"
+
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >"$SANDBOX/bad-uuid.out" 2>&1; then
+  echo "FAIL non-UUID handoff session id was not refused"
+  exit 1
+fi
+grep -q "refused malformed session id" "$SANDBOX/bad-uuid.out"
+
+ATTACK_SESSION_ID="00000000-0000-7000-8000-000000000004"
+ATTACK_REL="2026/05/03/rollout-2026-05-03T19-06-47-$ATTACK_SESSION_ID.jsonl"
+ATTACK_COLLISION_REL="2026/05/03/zzzz-evil-$ATTACK_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-second/history.jsonl" <<EOF
+{"session_id":"$ATTACK_SESSION_ID","ts":1760000003,"text":"attack collision work"}
+EOF
+cat > "$SANDBOX/home-second/sessions/$ATTACK_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$ATTACK_SESSION_ID","cwd":"/tmp/project"}}
+{"type":"turn_context","payload":{"cwd":"/tmp/project","text":"LEGIT CONTENT"}}
+EOF
+cat > "$SANDBOX/home-second/sessions/$ATTACK_COLLISION_REL" <<EOF
+{"type":"session_meta","payload":{"id":"99999999-9999-9999-9999-999999999999","cwd":"/tmp/project"}}
+{"type":"turn_context","payload":{"cwd":"/tmp/project","text":"ATTACKER PLANTED CONTENT"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+"$REPO_ROOT/second-codex" handoff "$ATTACK_SESSION_ID" >"$SANDBOX/collision.out"
+cmp -s "$SANDBOX/home-second/sessions/$ATTACK_REL" "$SANDBOX/home-a/sessions/$ATTACK_REL"
+test ! -e "$SANDBOX/home-a/sessions/$ATTACK_COLLISION_REL"
+
+SYMLINK_TARGET_SESSION_ID="00000000-0000-7000-8000-000000000005"
+SYMLINK_TARGET_REL="2026/05/03/rollout-2026-05-03T19-07-47-$SYMLINK_TARGET_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-second/history.jsonl" <<EOF
+{"session_id":"$SYMLINK_TARGET_SESSION_ID","ts":1760000004,"text":"symlink target work"}
+EOF
+cat > "$SANDBOX/home-second/sessions/$SYMLINK_TARGET_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$SYMLINK_TARGET_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+mkdir -p "$(dirname "$SANDBOX/home-a/sessions/$SYMLINK_TARGET_REL")"
+ln -s "$SANDBOX/redirected-session.jsonl" "$SANDBOX/home-a/sessions/$SYMLINK_TARGET_REL"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "$SYMLINK_TARGET_SESSION_ID" >"$SANDBOX/target-symlink.out" 2>&1; then
+  echo "FAIL handoff followed a target session symlink"
+  exit 1
+fi
+grep -q "refused to overwrite symlink" "$SANDBOX/target-symlink.out"
+test ! -e "$SANDBOX/redirected-session.jsonl"
+
+ln -s "$SANDBOX/home-second" "$SANDBOX/home-second-link"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second-link" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "$SESSION_ID" >"$SANDBOX/source-symlink.out" 2>&1; then
+  echo "FAIL handoff allowed symlinked second CODEX_HOME"
+  exit 1
+fi
+grep -q "refused symlinked second CODEX_HOME" "$SANDBOX/source-symlink.out"
+
+mkdir -p "$SANDBOX/unknown-second-home/sessions/2026/05/03"
+cat > "$SANDBOX/unknown-second-home/history.jsonl" <<EOF
+{"session_id":"$SESSION_ID","ts":1760000005,"text":"unknown work"}
+EOF
+cp "$SANDBOX/home-second/sessions/$SESSION_REL" "$SANDBOX/unknown-second-home/sessions/$SESSION_REL"
+touch "$SANDBOX/unknown-second-home/unclassified"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/unknown-second-home" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" session-id >"$SANDBOX/session-id-unknown.out" 2>&1; then
+  echo "FAIL session-id allowed unknown second CODEX_HOME entries"
+  exit 1
+fi
+grep -q "unknown top-level entries" "$SANDBOX/session-id-unknown.out"
+
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" session-id >"$SANDBOX/same-home.out" 2>&1; then
+  echo "FAIL identical primary and second CODEX_HOME was not refused"
+  exit 1
+fi
+grep -q "primary and second CODEX_HOME are the same" "$SANDBOX/same-home.out"
 
 PRIMARY_ONLY_SESSION_ID="00000000-0000-7000-8000-000000000003"
 PRIMARY_ONLY_REL="2026/05/03/rollout-2026-05-03T19-05-47-$PRIMARY_ONLY_SESSION_ID.jsonl"
