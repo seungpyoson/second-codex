@@ -41,6 +41,17 @@ SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 "$REPO_ROOT/second-codex" session-id --second /tmp/project > "$SANDBOX/session-id-cwd.out"
 grep -Fxq "$SESSION_ID" "$SANDBOX/session-id-cwd.out"
 
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_TEST_DISABLE_PYTHON3=1 \
+  "$REPO_ROOT/second-codex" handoff --last --cwd /tmp/project >"$SANDBOX/no-python-cwd.out" 2>&1; then
+  echo "FAIL cwd-filtered handoff ignored missing python3"
+  exit 1
+fi
+grep -q "cannot filter sessions by cwd" "$SANDBOX/no-python-cwd.out"
+
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \

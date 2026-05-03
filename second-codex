@@ -239,6 +239,7 @@ sync_projection() {
   fail_on_unknown_entries "second" "$B_HOME"
   fail_if_primary_has_no_environment
   local excludes=()
+  local pattern
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
     excludes+=(--exclude="/$pattern")
   done
@@ -276,9 +277,9 @@ latest_session_id_for_home() {
     latest_session_id_from_history "$home"
     return
   fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    latest_session_id_from_history "$home"
-    return
+  if [[ "${SECOND_CODEX_TEST_DISABLE_PYTHON3:-0}" == "1" ]] || ! command -v python3 >/dev/null 2>&1; then
+    echo "second-codex: python3 not found; cannot filter sessions by cwd. Omit --cwd or install python3." >&2
+    return 67
   fi
   python3 - "$home" "$cwd_filter" <<'PY'
 import json
@@ -616,6 +617,16 @@ except Exception:
 PY
 }
 
+doctor_command_is_blocked() {
+  local output_file="$1"
+  shift
+  : > "$output_file"
+  if "$WRAPPER_PATH" "$@" >"$output_file" 2>&1; then
+    return 1
+  fi
+  grep -q "refused this account/auth command" "$output_file"
+}
+
 doctor() {
   local failed=0
   echo "second-codex doctor"
@@ -669,20 +680,12 @@ doctor() {
   local block_out=""
   block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
   local blocked_ok=1
-  doctor_expect_block() {
-    : > "$block_out"
-    if "$WRAPPER_PATH" "$@" >"$block_out" 2>&1; then
-      blocked_ok=0
-      return
-    fi
-    grep -q "refused this account/auth command" "$block_out" || blocked_ok=0
-  }
-  doctor_expect_block login
-  doctor_expect_block logout
-  doctor_expect_block update
-  doctor_expect_block plugin login
-  doctor_expect_block mcp oauth
-  doctor_expect_block mcp -- oauth
+  doctor_command_is_blocked "$block_out" login || blocked_ok=0
+  doctor_command_is_blocked "$block_out" logout || blocked_ok=0
+  doctor_command_is_blocked "$block_out" update || blocked_ok=0
+  doctor_command_is_blocked "$block_out" plugin login || blocked_ok=0
+  doctor_command_is_blocked "$block_out" mcp oauth || blocked_ok=0
+  doctor_command_is_blocked "$block_out" mcp -- oauth || blocked_ok=0
   if (( blocked_ok )); then
     echo "PASS account/auth command blocked"
   else
