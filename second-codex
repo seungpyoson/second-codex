@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
+A_HOME="${CODEX_A_HOME:-$HOME/.codex}"
+B_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
+BIN_DIR="${SECOND_CODEX_SHIM_DIR:-/tmp/second-codex-shim}"
+WRAPPER_PATH="${BASH_SOURCE[0]}"
+REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex)}"
+
+ACCOUNT_PATTERNS=(
+  'auth.json'
+  'sessions/'
+  'archived_sessions/'
+  'session_index.jsonl'
+  'history.jsonl'
+  'logs_*'
+  'state_5.sqlite*'
+  'sqlite/'
+  'shell_snapshots/'
+  'log/'
+  'cache/'
+  '.tmp/'
+  'tmp/'
+  'installation_id'
+  '.codex-global-state.json*'
+  '..codex-global-state.json*'
+  'worktrees/'
+  'memories'
+  'memories_extensions'
+)
+
+ENVIRONMENT_PATTERNS=(
+  'config.toml'
+  'config.toml.bak-*'
+  'config.md'
+  'AGENTS.md'
+  'AGENTS.md.bak-*'
+  'hooks'
+  'hooks.json'
+  'skills'
+  'plugins'
+  'prompts'
+  'rules'
+  'superpowers'
+  'vendor_imports'
+  'models_cache.json'
+  'version.json'
+  'automations'
+  'ambient-suggestions'
+  '.codex-tape-recorder-assets-to-install.marker'
+  '.personality_migration'
+)
+
+block_reason() {
+  cat >&2 <<'EOF'
+second-codex refused this account/auth command.
+Run account/auth changes explicitly from the intended Codex account.
+EOF
+}
+
+matches_any_pattern() {
+  local value="$1"
+  shift
+  local pattern normalized
+  for pattern in "$@"; do
+    normalized="${pattern%/}"
+    [[ "$value" == $pattern ]] && return 0
+    [[ "$value" == $normalized ]] && return 0
+  done
+  return 1
+}
+
+unknown_entries() {
+  local home="$1"
+  [[ -d "$home" ]] || return 0
+  local path name
+  while IFS= read -r path; do
+    name="${path##*/}"
+    matches_any_pattern "$name" "${ACCOUNT_PATTERNS[@]}" && continue
+    matches_any_pattern "$name" "${ENVIRONMENT_PATTERNS[@]}" && continue
+    printf '%s\n' "$name"
+  done < <(find "$home" -mindepth 1 -maxdepth 1 -print | sort)
+}
+
+warn_unknown_entries() {
+  local unknown
+  unknown="$(unknown_entries "$A_HOME")"
+  [[ -z "$unknown" ]] && return 0
+  {
+    echo "second-codex: unknown top-level entries in primary CODEX_HOME:"
+    printf '%s\n' "$unknown" | sed 's/^/  - /'
+    echo "Run: second-codex doctor"
+  } >&2
+}
+
+reroute_notice() {
+  cat >&2 <<EOF
+second-codex: rerouting environment/config change to primary CODEX_HOME: $A_HOME
+EOF
+}
+
+classify_command() {
+  local args=("$@")
+  local i=0
+  while (( i < ${#args[@]} )); do
+    case "${args[$i]}" in
+      -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url)
+        i=$((i + 2))
+        ;;
+      --enable|--disable|-i|--image)
+        i=$((i + 2))
+        ;;
+      --)
+        i=$((i + 1))
+        break
+        ;;
+      -*)
+        i=$((i + 1))
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  local command="${args[$i]:-}"
+  local subcommand="${args[$((i + 1))]:-}"
+  local third="${args[$((i + 2))]:-}"
+
+  case "$command" in
+    mcp)
+      case "$subcommand" in
+        add|remove|rm|delete|del|update|edit|set)
+          echo reroute
+          return
+          ;;
+        oauth|login|logout)
+          echo block
+          return
+          ;;
+      esac
+      ;;
+    plugin|plugins)
+      case "$subcommand" in
+        install|uninstall|add|remove|rm|delete|del|update|enable|disable|login|auth)
+          echo reroute
+          return
+          ;;
+        marketplace)
+          case "$third" in
+            add|remove|rm|delete|del|upgrade|update)
+              echo reroute
+              return
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+    skill|skills|app|apps)
+      case "$subcommand" in
+        install|uninstall|add|remove|rm|delete|del|update|enable|disable|login|auth)
+          echo reroute
+          return
+          ;;
+      esac
+      ;;
+    features)
+      case "$subcommand" in
+        enable|disable)
+          echo reroute
+          return
+          ;;
+      esac
+      ;;
+    trust|untrust)
+      echo reroute
+      return
+      ;;
+    logout)
+      echo block
+      return
+      ;;
+    update)
+      echo block
+      return
+      ;;
+  esac
+  echo second
+}
+
+sync_projection() {
+  mkdir -p "$A_HOME" "$B_HOME"
+  local excludes=()
+  for pattern in "${ACCOUNT_PATTERNS[@]}"; do
+    excludes+=(--exclude="$pattern")
+  done
+  rsync -a --delete "${excludes[@]}" "$A_HOME/" "$B_HOME/"
+}
+
+ensure_shim() {
+  if [[ -L "$BIN_DIR" ]]; then
+    echo "second-codex refused to use symlinked shim directory: $BIN_DIR" >&2
+    return 73
+  fi
+  mkdir -p "$BIN_DIR"
+  chmod 700 "$BIN_DIR" 2>/dev/null || true
+  local owner_uid
+  owner_uid="$(stat -f '%u' "$BIN_DIR" 2>/dev/null || stat -c '%u' "$BIN_DIR")"
+  if [[ "$owner_uid" != "$(id -u)" ]]; then
+    echo "second-codex refused shim directory not owned by current user: $BIN_DIR" >&2
+    return 73
+  fi
+  local tmp_shim="$BIN_DIR/codex.$$"
+  cat > "$tmp_shim" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${SECOND_CODEX_SWITCH_WRAPPER:?missing SECOND_CODEX_SWITCH_WRAPPER}" "$@"
+EOF
+  chmod 700 "$tmp_shim"
+  mv "$tmp_shim" "$BIN_DIR/codex"
+}
+
+auth_status() {
+  local auth_file="$1/auth.json"
+  [[ -f "$auth_file" ]] || { echo "not logged in"; return 0; }
+  if [[ "${SECOND_CODEX_DOCTOR_SHOW_EMAIL:-0}" != "1" ]]; then
+    echo "logged in"
+    return 0
+  fi
+  python3 - "$auth_file" <<'PY'
+import base64, json, sys
+from pathlib import Path
+data = json.loads(Path(sys.argv[1]).read_text())
+token = (data.get("tokens") or {}).get("id_token") or ""
+if token.count(".") < 2:
+    print("unknown")
+    raise SystemExit
+payload = token.split(".")[1]
+payload += "=" * (-len(payload) % 4)
+claims = json.loads(base64.urlsafe_b64decode(payload))
+print(claims.get("email") or "unknown")
+PY
+}
+
+doctor() {
+  local failed=0
+  echo "second-codex doctor"
+  echo "primary_home=$A_HOME"
+  echo "second_home=$B_HOME"
+  echo "shim_dir=$BIN_DIR"
+  echo "primary_auth=$(auth_status "$A_HOME")"
+  echo "second_auth=$(auth_status "$B_HOME")"
+
+  local unknown
+  unknown="$(unknown_entries "$A_HOME")"
+  if [[ -n "$unknown" ]]; then
+    echo "FAIL unknown primary CODEX_HOME entries:"
+    printf '%s\n' "$unknown" | sed 's/^/  - /'
+    failed=1
+  else
+    echo "PASS no unknown primary CODEX_HOME entries"
+  fi
+
+  if [[ -L "$B_HOME/memories" && "$(readlink "$B_HOME/memories")" == "$A_HOME/memories" ]]; then
+    echo "PASS memories symlink to primary"
+  else
+    echo "FAIL memories is not a symlink to primary"
+    failed=1
+  fi
+
+  if [[ -L "$B_HOME/memories_extensions" && "$(readlink "$B_HOME/memories_extensions")" == "$A_HOME/memories_extensions" ]]; then
+    echo "PASS memories_extensions symlink to primary"
+  else
+    echo "FAIL memories_extensions is not a symlink to primary"
+    failed=1
+  fi
+
+  ensure_shim || failed=1
+  if [[ -x "$BIN_DIR/codex" && ! -L "$BIN_DIR" ]]; then
+    echo "PASS shim exists in owned non-symlink directory"
+  else
+    echo "FAIL shim missing or unsafe"
+    failed=1
+  fi
+
+  if "$0" mcp logout doctor-auth-check >/tmp/second-codex-doctor-block.out 2>&1; then
+    echo "FAIL account/auth command was not blocked"
+    failed=1
+  elif grep -q "refused this account/auth command" /tmp/second-codex-doctor-block.out; then
+    echo "PASS account/auth command blocked"
+  else
+    echo "FAIL account/auth block output unexpected"
+    failed=1
+  fi
+
+  return "$failed"
+}
+
+main() {
+  ensure_shim
+
+  if [[ "${1:-}" == "doctor" ]]; then
+    doctor
+    return
+  fi
+
+  local classification
+  classification="$(classify_command "$@")"
+
+  warn_unknown_entries
+  sync_projection
+  case "$classification" in
+    block)
+      block_reason
+      return 64
+      ;;
+    reroute)
+      reroute_notice
+      CODEX_HOME="$A_HOME" "$REAL_CODEX" "$@"
+      sync_projection
+      ;;
+    second)
+      SECOND_CODEX_SWITCH_WRAPPER="$WRAPPER_PATH" \
+        SECOND_CODEX_SWITCH_REAL_CODEX="$REAL_CODEX" \
+        PATH="$BIN_DIR:$PATH" \
+        CODEX_HOME="$B_HOME" \
+        "$REAL_CODEX" "$@"
+      ;;
+    *)
+      echo "second-codex internal error: unknown command classification '$classification'" >&2
+      return 70
+      ;;
+  esac
+}
+
+main "$@"
