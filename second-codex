@@ -4,59 +4,74 @@ set -euo pipefail
 ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 A_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 B_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
-BIN_DIR="${SECOND_CODEX_SHIM_DIR:-/tmp/second-codex-shim}"
+BIN_DIR="${SECOND_CODEX_SHIM_DIR:-${TMPDIR:-/tmp}/second-codex-shim-$(id -u)}"
 WRAPPER_PATH="${BASH_SOURCE[0]}"
-REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex)}"
+REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex || true)}"
 
-ACCOUNT_PATTERNS=(
-  'auth.json'
-  'sessions/'
-  'archived_sessions/'
-  'session_index.jsonl'
-  'history.jsonl'
-  'logs_*'
-  'state_5.sqlite*'
-  'sqlite/'
-  'shell_snapshots/'
-  'log/'
-  'cache/'
-  '.tmp/'
-  'tmp/'
-  'installation_id'
-  '.codex-global-state.json*'
-  '..codex-global-state.json*'
-  'worktrees/'
-  'memories'
-  'memories_extensions'
-)
-
-ENVIRONMENT_PATTERNS=(
-  'config.toml'
-  'config.toml.bak-*'
-  'config.md'
-  'AGENTS.md'
-  'AGENTS.md.bak-*'
-  'hooks'
-  'hooks.json'
-  'skills'
-  'plugins'
-  'prompts'
-  'rules'
-  'superpowers'
-  'vendor_imports'
-  'models_cache.json'
-  'version.json'
-  'automations'
-  'ambient-suggestions'
-  '.codex-tape-recorder-assets-to-install.marker'
-  '.personality_migration'
-)
+ACCOUNT_PATTERNS=()
+ENVIRONMENT_PATTERNS=()
 
 block_reason() {
   cat >&2 <<'EOF'
 second-codex refused this account/auth command.
 Run account/auth changes explicitly from the intended Codex account.
 EOF
+}
+
+find_manifest() {
+  local script_dir
+  script_dir="$(cd "$(dirname "$WRAPPER_PATH")" && pwd)"
+  local candidates=(
+    "${SECOND_CODEX_MANIFEST:-}"
+    "$ROOT/ownership-manifest.txt"
+    "$script_dir/ownership-manifest.txt"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+load_manifest() {
+  local manifest section line
+  if ! manifest="$(find_manifest)"; then
+    echo "second-codex missing ownership manifest" >&2
+    return 66
+  fi
+
+  ACCOUNT_PATTERNS=()
+  ENVIRONMENT_PATTERNS=()
+  section=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "$line" ]] || continue
+    case "$line" in
+      '['*']')
+        section="${line#[}"
+        section="${section%]}"
+        ;;
+      *)
+        case "$section" in
+          account-runtime|shared-by-reference)
+            ACCOUNT_PATTERNS+=("$line")
+            ;;
+          primary-owned-environment)
+            ENVIRONMENT_PATTERNS+=("$line")
+            ;;
+        esac
+        ;;
+    esac
+  done < "$manifest"
+
+  if (( ${#ACCOUNT_PATTERNS[@]} == 0 || ${#ENVIRONMENT_PATTERNS[@]} == 0 )); then
+    echo "second-codex ownership manifest did not define required pattern groups: $manifest" >&2
+    return 66
+  fi
 }
 
 matches_any_pattern() {
@@ -83,6 +98,20 @@ unknown_entries() {
   done < <(find "$home" -mindepth 1 -maxdepth 1 -print | sort)
 }
 
+fail_on_unknown_entries() {
+  local label="$1"
+  local home="$2"
+  local unknown
+  unknown="$(unknown_entries "$home")"
+  [[ -z "$unknown" ]] && return 0
+  {
+    echo "second-codex refused to sync because $label CODEX_HOME has unknown top-level entries:"
+    printf '%s\n' "$unknown" | sed 's/^/  - /'
+    echo "Classify these in ownership-manifest.txt before syncing."
+  } >&2
+  return 65
+}
+
 warn_unknown_entries() {
   local unknown
   unknown="$(unknown_entries "$A_HOME")"
@@ -105,10 +134,13 @@ classify_command() {
   local i=0
   while (( i < ${#args[@]} )); do
     case "${args[$i]}" in
-      -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url)
-        i=$((i + 2))
+      --config=*|--model=*|--profile=*|--sandbox=*|--cd=*|--ask-for-approval=*|--remote=*|--remote-auth-token-env=*|--add-dir=*|--local-provider=*|--download-url=*|--enable=*|--disable=*|--image=*)
+        i=$((i + 1))
         ;;
-      --enable|--disable|-i|--image)
+      -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image)
+        if (( i + 1 >= ${#args[@]} )); then
+          break
+        fi
         i=$((i + 2))
         ;;
       --)
@@ -181,6 +213,14 @@ classify_command() {
       echo block
       return
       ;;
+    login)
+      if [[ "$subcommand" == "status" ]]; then
+        echo second
+      else
+        echo block
+      fi
+      return
+      ;;
     update)
       echo block
       return
@@ -191,6 +231,8 @@ classify_command() {
 
 sync_projection() {
   mkdir -p "$A_HOME" "$B_HOME"
+  fail_on_unknown_entries "primary" "$A_HOME"
+  fail_on_unknown_entries "second" "$B_HOME"
   local excludes=()
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
     excludes+=(--exclude="$pattern")
@@ -262,6 +304,15 @@ doctor() {
     echo "PASS no unknown primary CODEX_HOME entries"
   fi
 
+  unknown="$(unknown_entries "$B_HOME")"
+  if [[ -n "$unknown" ]]; then
+    echo "FAIL unknown second CODEX_HOME entries:"
+    printf '%s\n' "$unknown" | sed 's/^/  - /'
+    failed=1
+  else
+    echo "PASS no unknown second CODEX_HOME entries"
+  fi
+
   if [[ -L "$B_HOME/memories" && "$(readlink "$B_HOME/memories")" == "$A_HOME/memories" ]]; then
     echo "PASS memories symlink to primary"
   else
@@ -284,20 +335,24 @@ doctor() {
     failed=1
   fi
 
-  if "$0" mcp logout doctor-auth-check >/tmp/second-codex-doctor-block.out 2>&1; then
+  local block_out
+  block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
+  if "$0" mcp logout doctor-auth-check >"$block_out" 2>&1; then
     echo "FAIL account/auth command was not blocked"
     failed=1
-  elif grep -q "refused this account/auth command" /tmp/second-codex-doctor-block.out; then
+  elif grep -q "refused this account/auth command" "$block_out"; then
     echo "PASS account/auth command blocked"
   else
     echo "FAIL account/auth block output unexpected"
     failed=1
   fi
+  rm -f "$block_out"
 
   return "$failed"
 }
 
 main() {
+  load_manifest
   ensure_shim
 
   if [[ "${1:-}" == "doctor" ]]; then
@@ -308,19 +363,28 @@ main() {
   local classification
   classification="$(classify_command "$@")"
 
+  if [[ "$classification" == "block" ]]; then
+    block_reason
+    return 64
+  fi
+
   warn_unknown_entries
   sync_projection
   case "$classification" in
-    block)
-      block_reason
-      return 64
-      ;;
     reroute)
       reroute_notice
+      if [[ -z "$REAL_CODEX" || ! -x "$REAL_CODEX" ]]; then
+        echo "second-codex could not find executable codex binary in PATH" >&2
+        return 69
+      fi
       CODEX_HOME="$A_HOME" "$REAL_CODEX" "$@"
       sync_projection
       ;;
     second)
+      if [[ -z "$REAL_CODEX" || ! -x "$REAL_CODEX" ]]; then
+        echo "second-codex could not find executable codex binary in PATH" >&2
+        return 69
+      fi
       SECOND_CODEX_SWITCH_WRAPPER="$WRAPPER_PATH" \
         SECOND_CODEX_SWITCH_REAL_CODEX="$REAL_CODEX" \
         PATH="$BIN_DIR:$PATH" \

@@ -15,11 +15,25 @@ mkdir -p "$SANDBOX/home-a/memories" "$SANDBOX/home-a/memories_extensions"
 ln -s "$SANDBOX/home-a/memories" "$SANDBOX/home-second/memories"
 ln -s "$SANDBOX/home-a/memories_extensions" "$SANDBOX/home-second/memories_extensions"
 
+MOCK_CODEX="$SANDBOX/mock-codex"
+cat > "$MOCK_CODEX" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "mcp" && "${2:-}" == "add" ]]; then
+  printf '\n[mcp_servers.%s]\ncommand = "%s"\n' "$3" "$5" >> "${CODEX_HOME:?missing CODEX_HOME}/config.toml"
+  exit 0
+fi
+echo "unexpected mock codex invocation: $*" >&2
+exit 64
+SH
+chmod 700 "$MOCK_CODEX"
+
 OUT="$SANDBOX/reroute.out"
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
 SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
 "$REPO_ROOT/second-codex" mcp add sandbox-reroute -- /usr/bin/true >"$OUT" 2>&1
 
 grep -q "rerouting environment/config change" "$OUT"
