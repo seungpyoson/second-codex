@@ -20,4 +20,13 @@ test "$(readlink "$SANDBOX/home/.codex-second/memories")" = "$SANDBOX/home/.code
 test "$(readlink "$SANDBOX/home/.codex-second/memories_extensions")" = "$SANDBOX/home/.codex/memories_extensions"
 grep -Fxq "source \"$SANDBOX/install root/second-codex-shell.zsh\"" "$SANDBOX/home/.zshrc"
 
+cat > "$SANDBOX/install root/second-codex" <<'SH'
+#!/usr/bin/env bash
+printf 'installed-helper:%s\n' "$*" > "${SECOND_CODEX_INSTALL_HELPER_LOG:?missing log}"
+SH
+chmod 700 "$SANDBOX/install root/second-codex"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; second-codex smoke-test' _ "$SANDBOX/install root/second-codex-shell.zsh"
+grep -Fxq "installed-helper:smoke-test" "$SANDBOX/helper.log"
+
 echo "PASS install sandbox"
