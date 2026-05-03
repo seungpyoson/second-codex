@@ -45,14 +45,22 @@ __second_codex_should_print_session_hint() {
     ""|exec|resume)
       return 0
       ;;
-    --help|-h|--version|-V|_session-hint|doctor|handoff|session-id|login|logout|mcp|features|plugin|plugins|skill|skills|app|apps|trust|untrust|update)
+    --help|-h|--version|-V|_session-hint|doctor|handoff|session-id|login|logout|mcp|features|plugin|plugins|skill|skills|app|apps|config|configure|trust|untrust|update)
       return 1
       ;;
-    *)
-      # Treat a non-command first positional value as a prompt.
-      return 0
-      ;;
   esac
+
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      _session-hint|doctor|handoff|session-id|login|logout|mcp|features|plugin|plugins|skill|skills|app|apps|config|configure|trust|untrust|update)
+        return 1
+        ;;
+    esac
+  done
+
+  # Treat a non-command first positional value as a prompt.
+  return 0
 }
 
 __second_codex_session_hint() {

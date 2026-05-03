@@ -41,6 +41,13 @@ SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 "$REPO_ROOT/second-codex" session-id --second /tmp/project > "$SANDBOX/session-id-cwd.out"
 grep -Fxq "$SESSION_ID" "$SANDBOX/session-id-cwd.out"
 
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+"$REPO_ROOT/second-codex" session-id /tmp/project > "$SANDBOX/session-id-positional-cwd.out"
+grep -Fxq "$SESSION_ID" "$SANDBOX/session-id-positional-cwd.out"
+
 if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
