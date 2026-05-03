@@ -32,6 +32,17 @@ option_takes_value() {
   esac
 }
 
+option_takes_no_value() {
+  case "$1" in
+    --oss|--dangerously-bypass-approvals-and-sandbox|--search|--no-alt-screen|-h|--help|-V|--version)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 find_manifest() {
   local script_dir
   script_dir="$(cd "$(dirname "$WRAPPER_PATH")" && pwd)"
@@ -162,10 +173,26 @@ is_valid_session_id() {
 refuse_symlink_home() {
   local label="$1"
   local home="$2"
-  if [[ -L "$home" ]]; then
-    echo "second-codex refused symlinked $label CODEX_HOME: $home" >&2
-    return 73
-  fi
+  local path="$home"
+  local current="" part target
+  local -a parts
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  path="${path%/}"
+  IFS=/ read -r -a parts <<< "${path#/}"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" ]] || continue
+    current="$current/$part"
+    if [[ -L "$current" ]]; then
+      target="$(readlink "$current")"
+      case "$current:$target" in
+        /var:private/var|/var:/private/var|/tmp:private/tmp|/tmp:/private/tmp|/etc:private/etc|/etc:/private/etc)
+          continue
+          ;;
+      esac
+      echo "second-codex refused symlinked $label CODEX_HOME: $home" >&2
+      return 73
+    fi
+  done
 }
 
 refuse_same_homes() {
@@ -325,7 +352,9 @@ classify_command() {
         ;;
       -*)
         option_is_auth_mutation "$arg" && { echo block; return; }
-        if option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
+        if option_takes_no_value "$arg"; then
+          i=$((i + 1))
+        elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
           i=$((i + 2))
         else
           saw_ambiguous_option=1
@@ -589,7 +618,11 @@ session_file_exists_for_home() {
   local home="$1"
   local session_id="$2"
   [[ -d "$home/sessions" ]] || return 1
-  find "$home/sessions" -type f -name "*$session_id*.jsonl" -print -quit | grep -q .
+  local candidate
+  while IFS= read -r -d '' candidate; do
+    session_file_contains_id "$candidate" "$session_id" && return 0
+  done < <(find "$home/sessions" -type f -name "*$session_id*.jsonl" -print0)
+  return 1
 }
 
 refuse_symlink_components() {

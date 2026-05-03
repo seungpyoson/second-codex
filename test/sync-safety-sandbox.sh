@@ -79,6 +79,19 @@ if run_wrapper "$SANDBOX/real-primary" "$SANDBOX/b-symlink" >"$SANDBOX/b-symlink
 fi
 grep -q "refused symlinked second CODEX_HOME" "$SANDBOX/b-symlink.out"
 
+mkdir -p "$SANDBOX/ancestor-target/second-home"
+cat > "$SANDBOX/ancestor-target/second-home/config.toml" <<'TOML'
+model = "gpt-5.5"
+TOML
+ln -s "$SANDBOX/real-primary/memories" "$SANDBOX/ancestor-target/second-home/memories"
+ln -s "$SANDBOX/real-primary/memories_extensions" "$SANDBOX/ancestor-target/second-home/memories_extensions"
+ln -s "$SANDBOX/ancestor-target" "$SANDBOX/ancestor-link"
+if run_wrapper "$SANDBOX/real-primary" "$SANDBOX/ancestor-link/second-home" >"$SANDBOX/ancestor-symlink.out" 2>&1; then
+  echo "FAIL second CODEX_HOME with a symlinked ancestor was not refused"
+  exit 1
+fi
+grep -q "refused symlinked second CODEX_HOME" "$SANDBOX/ancestor-symlink.out"
+
 mkdir -p "$SANDBOX/unknown-primary" "$SANDBOX/unknown-second"
 cat > "$SANDBOX/unknown-primary/config.toml" <<'TOML'
 model = "gpt-5.5"

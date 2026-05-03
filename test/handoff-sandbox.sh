@@ -297,6 +297,29 @@ fi
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/flagged-resume.out"
 cmp -s "$SANDBOX/home-a/sessions/$FLAGGED_RESUME_REL" "$SANDBOX/home-second/sessions/$FLAGGED_RESUME_REL"
 
+COLLISION_IMPORT_SESSION_ID="00000000-0000-7000-8000-000000000012"
+COLLISION_IMPORT_REL="2026/05/03/rollout-2026-05-03T19-13-47-$COLLISION_IMPORT_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$COLLISION_IMPORT_SESSION_ID","ts":1760000012,"text":"collision import primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$COLLISION_IMPORT_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$COLLISION_IMPORT_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+cat > "$SANDBOX/home-second/sessions/2026/05/03/evil-$COLLISION_IMPORT_SESSION_ID.jsonl" <<EOF
+{"type":"session_meta","payload":{"id":"99999999-9999-9999-9999-999999999999","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume "$COLLISION_IMPORT_SESSION_ID" >"$SANDBOX/collision-import.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/collision-import.out"
+cmp -s "$SANDBOX/home-a/sessions/$COLLISION_IMPORT_REL" "$SANDBOX/home-second/sessions/$COLLISION_IMPORT_REL"
+
 PROMPT_RESUME_SESSION_ID="00000000-0000-7000-8000-000000000009"
 PROMPT_RESUME_REL="2026/05/03/rollout-2026-05-03T19-11-47-$PROMPT_RESUME_SESSION_ID.jsonl"
 mkdir -p "$SANDBOX/prompt-home-a/sessions/2026/05/03" "$SANDBOX/prompt-home-a/memories" "$SANDBOX/prompt-home-a/memories_extensions" "$SANDBOX/prompt-home-second"

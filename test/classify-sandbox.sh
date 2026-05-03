@@ -123,6 +123,9 @@ assert_second no-login-flag --no-login chat
 assert_second auth-mode-flag --auth-mode=passive chat
 assert_second refresh-cache-flag --refresh-cache=1 exec hi
 assert_second remote-auth-token-env --remote-auth-token-env MY_VAR exec hi
+assert_second oss-prompt --oss write mcp docs
+assert_second search-prompt --search help me update plugin config
+assert_second no-alt-screen-prompt --no-alt-screen rotate auth token
 
 run_wrapper login status
 assert_grep "home=$SANDBOX/home-second args=login status" "$SANDBOX/codex.log"
