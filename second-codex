@@ -212,7 +212,7 @@ EOF
 
 token_is_auth_mutation() {
   case "$1" in
-    login|logout|auth|oauth|token|refresh|signout|sign-out|deauth|reauth|verify-auth)
+    login|logout|auth|oauth|token|refresh|signout|sign-out|signin|sign-in|deauth|reauth|reconnect|authenticate|authorize|session-create|account-switch|verify-auth)
       return 0
       ;;
     *)
@@ -223,7 +223,13 @@ token_is_auth_mutation() {
 
 option_is_auth_mutation() {
   case "$1" in
-    --*login*|--*logout*|--*auth*|--*oauth*|--*token*|--*refresh*)
+    --login|--login=*|--logout|--logout=*|\
+    --auth|--auth=*|--oauth|--oauth=*|--oauth-redirect|--oauth-redirect=*|\
+    --auth-token|--auth-token=*|--refresh-token|--refresh-token=*|\
+    --signin|--signin=*|--sign-in|--sign-in=*|\
+    --signout|--signout=*|--sign-out|--sign-out=*|\
+    --deauth|--deauth=*|--reauth|--reauth=*|\
+    --reconnect|--reconnect=*|--verify-auth|--verify-auth=*)
       return 0
       ;;
     *)
@@ -261,6 +267,9 @@ classify_known_command() {
 
   case "$command" in
     exec|resume|chat)
+      for token in "$@"; do
+        option_is_auth_mutation "$token" && { echo block; return; }
+      done
       echo second
       return
       ;;
@@ -290,6 +299,7 @@ classify_known_command() {
   if token_is_setup_command "$command"; then
     for token in "$@"; do
       token_is_auth_mutation "$token" && { echo block; return; }
+      option_is_auth_mutation "$token" && { echo block; return; }
     done
     echo reroute
     return
@@ -305,8 +315,8 @@ classify_command() {
     arg="${args[$i]}"
     case "$arg" in
       --)
-        echo second
-        return
+        saw_ambiguous_option=1
+        i=$((i + 1))
         ;;
       --*=*)
         option_is_auth_mutation "$arg" && { echo block; return; }
@@ -562,6 +572,36 @@ session_file_exists_for_home() {
   find "$home/sessions" -type f -name "*$session_id*.jsonl" -print -quit | grep -q .
 }
 
+refuse_symlink_components() {
+  local root="$1"
+  local rel_dir="$2"
+  local label="$3"
+  local current="$root"
+  local part remaining="$rel_dir"
+
+  [[ -z "$rel_dir" || "$rel_dir" == "." ]] && return 0
+
+  while [[ -n "$remaining" ]]; do
+    if [[ "$remaining" == */* ]]; then
+      part="${remaining%%/*}"
+      remaining="${remaining#*/}"
+    else
+      part="$remaining"
+      remaining=""
+    fi
+    [[ -z "$part" || "$part" == "." ]] && continue
+    if [[ "$part" == ".." ]]; then
+      echo "second-codex refused unsafe $label sessions path: $root/$rel_dir" >&2
+      return 73
+    fi
+    current="$current/$part"
+    if [[ -L "$current" ]]; then
+      echo "second-codex refused unsafe $label sessions path: $current" >&2
+      return 73
+    fi
+  done
+}
+
 copy_session_between_homes() {
   local source_home="$1"
   local target_home="$2"
@@ -581,7 +621,11 @@ copy_session_between_homes() {
     return 73
   fi
   local target_session_file="$target_home/sessions/$rel_path"
+  local rel_dir
+  rel_dir="$(dirname "$rel_path")"
+  refuse_symlink_components "$target_home/sessions" "$rel_dir" "$target_label" || return $?
   mkdir -p "$(dirname "$target_session_file")"
+  refuse_symlink_components "$target_home/sessions" "$rel_dir" "$target_label" || return $?
   if [[ -L "$target_session_file" ]]; then
     echo "second-codex refused to overwrite symlink: $target_session_file" >&2
     return 73
@@ -638,11 +682,45 @@ second-codex: copied_session=$copied_session
 EOF
 }
 
+find_resume_session_arg() {
+  local args=("$@")
+  local i=0 arg next
+  while (( i < ${#args[@]} )); do
+    arg="${args[$i]}"
+    case "$arg" in
+      --)
+        i=$((i + 1))
+        ;;
+      --*=*)
+        i=$((i + 1))
+        ;;
+      -*)
+        if option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
+          i=$((i + 2))
+        else
+          i=$((i + 1))
+        fi
+        ;;
+      resume)
+        next="${args[$((i + 1))]:-}"
+        if [[ -n "$next" && "$next" != --* ]] && is_valid_session_id "$next"; then
+          printf '%s\n' "$next"
+          return 0
+        fi
+        return 1
+        ;;
+      *)
+        i=$((i + 1))
+        ;;
+    esac
+  done
+  return 1
+}
+
 preflight_second_resume() {
-  [[ "${1:-}" == "resume" ]] || return 0
-  local session_id="${2:-}"
-  [[ -n "$session_id" && "$session_id" != --* ]] || return 0
-  is_valid_session_id "$session_id" || return 0
+  local session_id
+  session_id="$(find_resume_session_arg "$@" || true)"
+  [[ -n "$session_id" ]] || return 0
   session_file_exists_for_home "$B_HOME" "$session_id" && return 0
   if session_file_exists_for_home "$A_HOME" "$session_id"; then
     import_primary_session_to_second "$session_id"
@@ -875,7 +953,7 @@ doctor() {
   fi
 
   ensure_shim || failed=1
-  if [[ -x "$BIN_DIR/codex" && ! -L "$BIN_DIR" ]]; then
+  if [[ -x "$BIN_DIR/codex" && ! -L "$BIN_DIR" && ! -L "$BIN_DIR/codex" ]]; then
     echo "PASS shim exists in owned non-symlink directory"
   else
     echo "FAIL shim missing or unsafe"
@@ -891,6 +969,9 @@ doctor() {
   doctor_command_is_blocked "$block_out" plugin login || blocked_ok=0
   doctor_command_is_blocked "$block_out" mcp oauth || blocked_ok=0
   doctor_command_is_blocked "$block_out" mcp -- oauth || blocked_ok=0
+  doctor_command_is_blocked "$block_out" -- login || blocked_ok=0
+  doctor_command_is_blocked "$block_out" exec --login=foo prompt || blocked_ok=0
+  doctor_command_is_blocked "$block_out" mcp add --login=user server || blocked_ok=0
   if (( blocked_ok )); then
     echo "PASS account/auth command blocked"
   else
@@ -922,9 +1003,17 @@ main() {
       guard_manifest_homes
       case "${1:-}" in
         --primary)
+          if [[ "${2:-}" == --* ]]; then
+            echo "usage: second-codex session-id [--primary|--second] [CWD]" >&2
+            return 64
+          fi
           latest_session_id_for_home "$A_HOME" "${2:-}"
           ;;
         --second|"")
+          if [[ "${2:-}" == --* ]]; then
+            echo "usage: second-codex session-id [--primary|--second] [CWD]" >&2
+            return 64
+          fi
           latest_session_id_for_home "$B_HOME" "${2:-}"
           ;;
         -*)

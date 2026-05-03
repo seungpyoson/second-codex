@@ -91,13 +91,36 @@ assert_blocked upgrade upgrade
 assert_blocked flag-login --login=user@example.com chat
 assert_blocked flag-auth-token --auth-token=abcdef chat
 assert_blocked flag-oauth --oauth-redirect=http://example.test chat
+assert_blocked flag-signout --signout chat
+assert_blocked flag-reconnect --reconnect chat
+assert_blocked flag-sign-out --sign-out chat
+assert_blocked separator-login -- login
+assert_blocked separator-logout -- logout
+assert_blocked separator-mcp-oauth -- mcp oauth
+assert_blocked exec-flag-login exec --login=foo prompt
+assert_blocked exec-flag-auth-token exec --auth-token=xyz hi
+assert_blocked resume-flag-login resume --login=foo 00000000-0000-7000-8000-000000000099
+assert_blocked chat-flag-auth-token chat --auth-token=h say hi
+assert_blocked mcp-add-flag-login mcp add --login=user server
+assert_blocked mcp-add-auth-token mcp add --auth-token=abc server
+assert_blocked plugin-add-flag-oauth plugin add --oauth=foo thing
+assert_blocked plugin-install-reauth plugin install --reauth foo
+assert_blocked plugin-install-signout plugin install --signout foo
+assert_blocked reconnect-command reconnect
+assert_blocked authenticate-command authenticate
+assert_blocked authorize-command authorize
 
 assert_second exec-login-prompt exec please write a login form
 assert_second exec-auth-token-prompt exec rotate the auth token
 assert_second exec-mcp-prompt exec how does mcp work
 assert_second exec-update-prompt exec update the changelog
 assert_second bare-update-prompt help me update the plugin config
-assert_second separator-prompt -- login
+assert_second max-tokens-flag --max-tokens=500 exec hi
+assert_second token-budget-flag --token-budget=100 chat
+assert_second no-login-flag --no-login chat
+assert_second auth-mode-flag --auth-mode=passive chat
+assert_second refresh-cache-flag --refresh-cache=1 exec hi
+assert_second remote-auth-token-env --remote-auth-token-env MY_VAR exec hi
 
 run_wrapper login status
 assert_grep "home=$SANDBOX/home-second args=login status" "$SANDBOX/codex.log"

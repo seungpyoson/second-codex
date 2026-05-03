@@ -52,6 +52,16 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" session-id --primary --foo >"$SANDBOX/session-id-bad-option.out" 2>&1; then
+  echo "FAIL session-id accepted option-looking cwd"
+  exit 1
+fi
+grep -q "usage: second-codex session-id" "$SANDBOX/session-id-bad-option.out"
+
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
   SECOND_CODEX_TEST_DISABLE_PYTHON3=1 \
   "$REPO_ROOT/second-codex" handoff --last --cwd /tmp/project >"$SANDBOX/no-python-cwd.out" 2>&1; then
   echo "FAIL cwd-filtered handoff ignored missing python3"
@@ -154,6 +164,28 @@ fi
 grep -q "refused to overwrite symlink" "$SANDBOX/target-symlink.out"
 test ! -e "$SANDBOX/redirected-session.jsonl"
 
+INTERMEDIATE_SYMLINK_SESSION_ID="00000000-0000-7000-8000-000000000006"
+INTERMEDIATE_SYMLINK_REL="2026/05/04/rollout-2026-05-04T19-08-47-$INTERMEDIATE_SYMLINK_SESSION_ID.jsonl"
+mkdir -p "$SANDBOX/home-second/sessions/2026/05/04"
+cat >> "$SANDBOX/home-second/history.jsonl" <<EOF
+{"session_id":"$INTERMEDIATE_SYMLINK_SESSION_ID","ts":1760000006,"text":"intermediate symlink work"}
+EOF
+cat > "$SANDBOX/home-second/sessions/$INTERMEDIATE_SYMLINK_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$INTERMEDIATE_SYMLINK_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+mkdir -p "$SANDBOX/home-a/sessions/2026/05" "$SANDBOX/redirected-dir"
+ln -s "$SANDBOX/redirected-dir" "$SANDBOX/home-a/sessions/2026/05/04"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "$INTERMEDIATE_SYMLINK_SESSION_ID" >"$SANDBOX/intermediate-symlink.out" 2>&1; then
+  echo "FAIL handoff followed an intermediate target directory symlink"
+  exit 1
+fi
+grep -q "refused unsafe primary sessions path" "$SANDBOX/intermediate-symlink.out"
+test -z "$(find "$SANDBOX/redirected-dir" -mindepth 1 -print -quit)"
+
 ln -s "$SANDBOX/home-second" "$SANDBOX/home-second-link"
 if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   CODEX_A_HOME="$SANDBOX/home-a" \
@@ -212,5 +244,25 @@ fi
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/primary-only-resume.out"
 cmp -s "$SANDBOX/home-a/sessions/$PRIMARY_ONLY_REL" "$SANDBOX/home-second/sessions/$PRIMARY_ONLY_REL"
 grep -Fq "\"session_id\":\"$PRIMARY_ONLY_SESSION_ID\"" "$SANDBOX/home-second/history.jsonl"
+
+FLAGGED_RESUME_SESSION_ID="00000000-0000-7000-8000-000000000007"
+FLAGGED_RESUME_REL="2026/05/03/rollout-2026-05-03T19-09-47-$FLAGGED_RESUME_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$FLAGGED_RESUME_SESSION_ID","ts":1760000007,"text":"flagged primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$FLAGGED_RESUME_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$FLAGGED_RESUME_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" --config model=gpt-5.5 resume "$FLAGGED_RESUME_SESSION_ID" >"$SANDBOX/flagged-resume.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/flagged-resume.out"
+cmp -s "$SANDBOX/home-a/sessions/$FLAGGED_RESUME_REL" "$SANDBOX/home-second/sessions/$FLAGGED_RESUME_REL"
 
 echo "PASS handoff sandbox"
