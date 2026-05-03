@@ -343,7 +343,6 @@ classify_command() {
     arg="${args[$i]}"
     case "$arg" in
       --)
-        saw_ambiguous_option=1
         i=$((i + 1))
         ;;
       --*=*)
@@ -761,7 +760,9 @@ find_resume_session_arg() {
         i=$((i + 1))
         ;;
       -*)
-        if option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
+        if option_takes_no_value "$arg"; then
+          i=$((i + 1))
+        elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
           i=$((i + 2))
         else
           i=$((i + 1))
@@ -769,6 +770,9 @@ find_resume_session_arg() {
         ;;
       resume)
         next="${args[$((i + 1))]:-}"
+        if [[ "$next" == "--" ]]; then
+          next="${args[$((i + 2))]:-}"
+        fi
         if [[ -n "$next" && "$next" != --* ]] && is_valid_session_id "$next"; then
           printf '%s\n' "$next"
           return 0
