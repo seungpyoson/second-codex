@@ -270,6 +270,102 @@ sync_projection() {
   rsync -a --delete "${excludes[@]}" "$A_HOME/" "$B_HOME/"
 }
 
+latest_second_session_id() {
+  local history="$B_HOME/history.jsonl"
+  [[ -f "$history" ]] || {
+    echo "second-codex could not find second account history: $history" >&2
+    return 67
+  }
+  local session_id
+  session_id="$(sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p' "$history" | tail -n 1)"
+  [[ -n "$session_id" ]] || {
+    echo "second-codex could not find a session_id in $history" >&2
+    return 67
+  }
+  printf '%s\n' "$session_id"
+}
+
+find_second_session_file() {
+  local session_id="$1"
+  local sessions_dir="$B_HOME/sessions"
+  [[ -d "$sessions_dir" ]] || {
+    echo "second-codex could not find second account sessions directory: $sessions_dir" >&2
+    return 67
+  }
+  local session_file
+  session_file="$(find "$sessions_dir" -type f -name '*.jsonl' -print | grep -F "$session_id" | sort | tail -n 1 || true)"
+  [[ -n "$session_file" ]] || {
+    echo "second-codex could not find second account session file for: $session_id" >&2
+    return 67
+  }
+  printf '%s\n' "$session_file"
+}
+
+append_primary_history_line() {
+  local session_id="$1"
+  local second_history="$B_HOME/history.jsonl"
+  local primary_history="$A_HOME/history.jsonl"
+  [[ -f "$second_history" ]] || return 0
+
+  local history_line
+  history_line="$(grep -F "\"session_id\":\"$session_id\"" "$second_history" | tail -n 1 || true)"
+  [[ -n "$history_line" ]] || return 0
+
+  mkdir -p "$A_HOME"
+  touch "$primary_history"
+  chmod 600 "$primary_history" 2>/dev/null || true
+  if ! grep -Fxq "$history_line" "$primary_history"; then
+    printf '%s\n' "$history_line" >> "$primary_history"
+  fi
+}
+
+handoff_session() {
+  local requested="${1:---last}"
+  if (( $# > 1 )); then
+    echo "usage: second-codex handoff [SESSION_ID|--last]" >&2
+    return 64
+  fi
+
+  local session_id
+  case "$requested" in
+    ""|--last)
+      session_id="$(latest_second_session_id)"
+      ;;
+    *)
+      session_id="$requested"
+      ;;
+  esac
+
+  local second_session_file
+  second_session_file="$(find_second_session_file "$session_id")"
+  local rel_path="${second_session_file#"$B_HOME/sessions/"}"
+  if [[ "$rel_path" == "$second_session_file" ]]; then
+    echo "second-codex internal error: session path is outside second sessions directory" >&2
+    return 70
+  fi
+
+  local primary_session_file="$A_HOME/sessions/$rel_path"
+  mkdir -p "$(dirname "$primary_session_file")"
+  if [[ -e "$primary_session_file" ]]; then
+    if ! cmp -s "$second_session_file" "$primary_session_file"; then
+      echo "second-codex refused to overwrite different primary session file: $primary_session_file" >&2
+      return 73
+    fi
+  else
+    cp "$second_session_file" "$primary_session_file"
+    chmod 600 "$primary_session_file" 2>/dev/null || true
+  fi
+  append_primary_history_line "$session_id"
+
+  cat <<EOF
+second-codex handoff
+session_id=$session_id
+copied_session=$primary_session_file
+resume_primary_interactive=codex resume $session_id
+resume_primary_exec=codex exec resume $session_id
+EOF
+}
+
 ensure_shim() {
   if [[ -L "$BIN_DIR" ]]; then
     echo "second-codex refused to use symlinked shim directory: $BIN_DIR" >&2
@@ -393,6 +489,19 @@ doctor() {
 
 main() {
   load_manifest
+
+  case "${1:-}" in
+    handoff)
+      shift
+      handoff_session "$@"
+      return
+      ;;
+    session-id)
+      latest_second_session_id
+      return
+      ;;
+  esac
+
   ensure_shared_paths
   ensure_shim
 

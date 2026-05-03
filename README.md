@@ -40,10 +40,32 @@ second-codex login status
 second-codex exec "Reply with exactly: second-codex ok"
 ```
 
+## Session Handoff
+
+If the second ChatGPT subscription hits a usage limit, hand off the current second-account session to primary Codex:
+
+```bash
+second-codex handoff --last
+codex resume <session_id>
+```
+
+`second-codex handoff` copies only the selected second-account session transcript and matching history entry into primary `~/.codex`. It does not copy auth, logs, state databases, caches, shell snapshots, or other second-account runtime state.
+
+Use an explicit session id when needed:
+
+```bash
+second-codex session-id
+second-codex handoff <session_id>
+codex exec resume <session_id>
+```
+
+The resumed session uses the primary Codex account/provider because it is launched through `codex`, not `second-codex`.
+
 ## Security Notes
 
 - `second-codex` is account/config isolation, not an OS security sandbox.
 - Memories are shared with primary Codex; do not use `second-codex` for memory-private work.
+- Session handoff intentionally copies the selected second-account transcript into primary Codex so primary can resume it.
 - GitHub connector writes use the GitHub connector installation; avoid destructive GitHub actions unless explicitly intended.
 - Safe setup/config commands are rerouted to primary `~/.codex`; account/auth commands are blocked.
 - The subprocess shim is generated under a user-specific temp path such as `/tmp/second-codex-shim-501` with owner checks and restrictive permissions.
