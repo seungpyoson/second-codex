@@ -38,8 +38,14 @@ fi
 grep -q "primary CODEX_HOME has no environment entries" "$SANDBOX/empty.out"
 grep -q "model" "$SANDBOX/home-second/config.toml"
 
-mkdir -p "$SANDBOX/real-primary" "$SANDBOX/real-second" "$SANDBOX/linked-primary" "$SANDBOX/linked-second"
+mkdir -p "$SANDBOX/real-primary" "$SANDBOX/real-second" "$SANDBOX/linked-second"
 cat > "$SANDBOX/real-primary/config.toml" <<'TOML'
+model = "gpt-5.5"
+TOML
+cat > "$SANDBOX/real-second/config.toml" <<'TOML'
+model = "gpt-5.5"
+TOML
+cat > "$SANDBOX/linked-second/config.toml" <<'TOML'
 model = "gpt-5.5"
 TOML
 mkdir -p "$SANDBOX/real-primary/memories" "$SANDBOX/real-primary/memories_extensions"
@@ -62,6 +68,9 @@ grep -q "refused symlinked second CODEX_HOME" "$SANDBOX/b-symlink.out"
 
 mkdir -p "$SANDBOX/unknown-primary" "$SANDBOX/unknown-second"
 cat > "$SANDBOX/unknown-primary/config.toml" <<'TOML'
+model = "gpt-5.5"
+TOML
+cat > "$SANDBOX/unknown-second/config.toml" <<'TOML'
 model = "gpt-5.5"
 TOML
 touch "$SANDBOX/unknown-primary/unclassified"
