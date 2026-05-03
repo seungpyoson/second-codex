@@ -46,4 +46,18 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 fi
 grep -q "refused to replace existing" "$SANDBOX/refuse.out"
 
+rm -rf "$SANDBOX/home-a/memories" "$SANDBOX/home-second/memories"
+echo "not a directory" > "$SANDBOX/home-a/memories"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
+  "$REPO_ROOT/second-codex" exec should-not-run >"$SANDBOX/primary-file.out" 2>&1; then
+  echo "FAIL primary memory file was not refused"
+  exit 1
+fi
+grep -q "primary .*memories is not a directory" "$SANDBOX/primary-file.out"
+
 echo "PASS shared memory sandbox"

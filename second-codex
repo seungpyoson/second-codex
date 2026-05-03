@@ -5,6 +5,9 @@ ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 A_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 B_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
 BIN_DIR="${SECOND_CODEX_SHIM_DIR:-${TMPDIR:-/tmp}/second-codex-shim-$(id -u)}"
+A_HOME="${A_HOME%/}"
+B_HOME="${B_HOME%/}"
+BIN_DIR="${BIN_DIR%/}"
 WRAPPER_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex || true)}"
 
@@ -28,7 +31,7 @@ find_manifest() {
   )
   local candidate
   for candidate in "${candidates[@]}"; do
-    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    [[ -n "$candidate" && -f "$candidate" && -r "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
   done
@@ -117,6 +120,10 @@ ensure_shared_path() {
   local target="$A_HOME/$name"
   local link="$B_HOME/$name"
 
+  if [[ -e "$target" && ! -d "$target" ]]; then
+    echo "second-codex refused shared path because primary $target is not a directory." >&2
+    return 73
+  fi
   mkdir -p "$target" "$B_HOME"
   if [[ -L "$link" && "$(readlink "$link")" == "$target" ]]; then
     return 0
@@ -134,135 +141,103 @@ ensure_shared_paths() {
 }
 
 reroute_notice() {
-  cat >&2 <<EOF
-second-codex: rerouting environment/config change to primary CODEX_HOME: $A_HOME
-EOF
+  printf 'second-codex: rerouting environment/config change to primary CODEX_HOME: %s\n' "$A_HOME" >&2
 }
 
-option_takes_value() {
-  case "$1" in
-    -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+is_valid_session_id() {
+  [[ "$1" =~ ^[0-9A-Fa-f-]{36}$ ]]
+}
+
+refuse_symlink_home() {
+  local label="$1"
+  local home="$2"
+  if [[ -L "$home" ]]; then
+    echo "second-codex refused symlinked $label CODEX_HOME: $home" >&2
+    return 73
+  fi
+}
+
+home_has_environment_sentinel() {
+  local home="$1"
+  local path name
+  [[ -d "$home" ]] || return 1
+  while IFS= read -r path; do
+    name="${path##*/}"
+    matches_any_pattern "$name" "${ENVIRONMENT_PATTERNS[@]}" && return 0
+  done < <(find "$home" -mindepth 1 -maxdepth 1 -print | sort)
+  return 1
+}
+
+fail_if_primary_has_no_environment() {
+  if home_has_environment_sentinel "$A_HOME"; then
+    return 0
+  fi
+  cat >&2 <<EOF
+second-codex refused destructive projection because primary CODEX_HOME has no environment entries: $A_HOME
+Set up primary Codex first, or check CODEX_A_HOME.
+EOF
+  return 65
 }
 
 classify_command() {
-  local args=("$@")
-  local i=0
-  while (( i < ${#args[@]} )); do
-    case "${args[$i]}" in
-      --*=*)
-        i=$((i + 1))
-        ;;
-      --)
-        i=$((i + 1))
-        break
-        ;;
-      -*)
-        if ! option_takes_value "${args[$i]}"; then
-          i=$((i + 1))
-          continue
-        fi
-        if (( i + 1 >= ${#args[@]} )); then
-          break
-        fi
-        i=$((i + 2))
-        ;;
-      *)
-        break
-        ;;
+  local has_mcp=0 has_plugin=0 has_managed=0 has_features=0 has_trust=0 has_config=0
+  local has_login=0 has_status=0 has_logout=0 has_auth=0 has_oauth=0 has_token=0 has_refresh=0
+  local has_update=0 has_upgrade=0
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      mcp) has_mcp=1 ;;
+      plugin|plugins) has_plugin=1; has_managed=1 ;;
+      skill|skills|app|apps) has_managed=1 ;;
+      features) has_features=1 ;;
+      trust|untrust) has_trust=1 ;;
+      config|configure) has_config=1 ;;
+      login) has_login=1 ;;
+      status) has_status=1 ;;
+      logout) has_logout=1 ;;
+      auth) has_auth=1 ;;
+      oauth) has_oauth=1 ;;
+      token) has_token=1 ;;
+      refresh) has_refresh=1 ;;
+      update) has_update=1 ;;
+      upgrade) has_upgrade=1 ;;
     esac
   done
 
-  local command="${args[$i]:-}"
-  local subcommand="${args[$((i + 1))]:-}"
-  local third="${args[$((i + 2))]:-}"
-
-  case "$command" in
-    mcp)
-      case "$subcommand" in
-        add|remove|rm|delete|del|update|edit|set)
-          echo reroute
-          return
-          ;;
-        oauth|login|logout)
-          echo block
-          return
-          ;;
-      esac
-      ;;
-    plugin|plugins)
-      case "$subcommand" in
-        login|auth|oauth|logout)
-          echo block
-          return
-          ;;
-        install|uninstall|add|remove|rm|delete|del|update|enable|disable)
-          echo reroute
-          return
-          ;;
-        marketplace)
-          case "$third" in
-            add|remove|rm|delete|del|upgrade|update)
-              echo reroute
-              return
-              ;;
-          esac
-          ;;
-      esac
-      ;;
-    skill|skills|app|apps)
-      case "$subcommand" in
-        login|auth|oauth|logout)
-          echo block
-          return
-          ;;
-        install|uninstall|add|remove|rm|delete|del|update|enable|disable)
-          echo reroute
-          return
-          ;;
-      esac
-      ;;
-    features)
-      case "$subcommand" in
-        enable|disable)
-          echo reroute
-          return
-          ;;
-      esac
-      ;;
-    trust|untrust)
+  if (( has_logout || has_auth || has_oauth || has_token || has_refresh )); then
+    echo block
+    return
+  fi
+  if (( has_login )); then
+    if (( has_status && ! has_mcp && ! has_plugin && ! has_managed && ! has_features && ! has_config )); then
+      echo second
+      return
+    fi
+    echo block
+    return
+  fi
+  if (( has_update || has_upgrade )); then
+    if (( has_mcp || has_managed || has_features || has_config )); then
       echo reroute
       return
-      ;;
-    logout)
-      echo block
-      return
-      ;;
-    login)
-      if [[ "$subcommand" == "status" ]]; then
-        echo second
-      else
-        echo block
-      fi
-      return
-      ;;
-    update)
-      echo block
-      return
-      ;;
-  esac
+    fi
+    echo block
+    return
+  fi
+  if (( has_mcp || has_managed || has_features || has_trust || has_config )); then
+    echo reroute
+    return
+  fi
   echo second
 }
 
 sync_projection() {
+  refuse_symlink_home "primary" "$A_HOME"
+  refuse_symlink_home "second" "$B_HOME"
   mkdir -p "$A_HOME" "$B_HOME"
   fail_on_unknown_entries "primary" "$A_HOME"
   fail_on_unknown_entries "second" "$B_HOME"
+  fail_if_primary_has_no_environment
   local excludes=()
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
     excludes+=(--exclude="/$pattern")
@@ -287,6 +262,10 @@ latest_session_id_from_history() {
     echo "second-codex could not find a session_id in $history" >&2
     return 67
   }
+  if ! is_valid_session_id "$session_id"; then
+    echo "second-codex refused malformed session id in history: $session_id" >&2
+    return 67
+  fi
   printf '%s\n' "$session_id"
 }
 
@@ -364,13 +343,17 @@ PY
 
 find_second_session_file() {
   local session_id="$1"
+  if ! is_valid_session_id "$session_id"; then
+    echo "second-codex refused malformed session id: $session_id" >&2
+    return 64
+  fi
   local sessions_dir="$B_HOME/sessions"
   [[ -d "$sessions_dir" ]] || {
     echo "second-codex could not find second account sessions directory: $sessions_dir" >&2
     return 67
   }
   local session_file
-  session_file="$(find "$sessions_dir" -type f -name '*.jsonl' -print | grep -F "$session_id" | sort | tail -n 1 || true)"
+  session_file="$(find "$sessions_dir" -type f -name "*$session_id*.jsonl" -print | sort | tail -n 1 || true)"
   [[ -n "$session_file" ]] || {
     echo "second-codex could not find second account session file for: $session_id" >&2
     return 67
@@ -380,6 +363,10 @@ find_second_session_file() {
 
 append_primary_history_line() {
   local session_id="$1"
+  if ! is_valid_session_id "$session_id"; then
+    echo "second-codex refused malformed session id: $session_id" >&2
+    return 64
+  fi
   local second_history="$B_HOME/history.jsonl"
   local primary_history="$A_HOME/history.jsonl"
   [[ -f "$second_history" ]] || return 0
@@ -442,6 +429,10 @@ handoff_session() {
       session_id="$requested"
       ;;
   esac
+  if ! is_valid_session_id "$session_id"; then
+    echo "second-codex refused malformed session id: $session_id" >&2
+    return 64
+  fi
 
   local second_session_file
   second_session_file="$(find_second_session_file "$session_id")"
@@ -452,6 +443,10 @@ handoff_session() {
   fi
 
   local primary_session_file="$A_HOME/sessions/$rel_path"
+  if [[ -L "$A_HOME" || -L "$A_HOME/sessions" ]]; then
+    echo "second-codex refused unsafe primary sessions path: $A_HOME/sessions" >&2
+    return 73
+  fi
   mkdir -p "$(dirname "$primary_session_file")"
   if [[ -e "$primary_session_file" ]]; then
     if ! cmp -s "$second_session_file" "$primary_session_file"; then
@@ -509,14 +504,25 @@ ensure_shim() {
     return 73
   fi
   mkdir -p "$BIN_DIR"
-  chmod 700 "$BIN_DIR" 2>/dev/null || true
+  chmod 700 "$BIN_DIR"
   local owner_uid
   owner_uid="$(stat -f '%u' "$BIN_DIR" 2>/dev/null || stat -c '%u' "$BIN_DIR")"
   if [[ "$owner_uid" != "$(id -u)" ]]; then
     echo "second-codex refused shim directory not owned by current user: $BIN_DIR" >&2
     return 73
   fi
-  local tmp_shim="$BIN_DIR/codex.$$"
+  local mode
+  mode="$(stat -f '%Lp' "$BIN_DIR" 2>/dev/null || stat -c '%a' "$BIN_DIR")"
+  if [[ "$mode" != "700" ]]; then
+    echo "second-codex refused shim directory with unsafe mode $mode: $BIN_DIR" >&2
+    return 73
+  fi
+  if [[ -n "$REAL_CODEX" && "$REAL_CODEX" == "$BIN_DIR/codex" ]]; then
+    echo "second-codex refused recursive codex shim resolution: $REAL_CODEX" >&2
+    return 69
+  fi
+  local tmp_shim
+  tmp_shim="$(umask 077; mktemp "$BIN_DIR/codex.XXXXXX")"
   cat > "$tmp_shim" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -606,27 +612,35 @@ doctor() {
   fi
 
   local block_out=""
-  trap 'rm -f "${block_out:-}"' RETURN
   block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
-  if "$WRAPPER_PATH" mcp logout doctor-auth-check >"$block_out" 2>&1; then
-    echo "FAIL account/auth command was not blocked"
-    failed=1
-  elif grep -q "refused this account/auth command" "$block_out"; then
+  local blocked_ok=1
+  doctor_expect_block() {
+    : > "$block_out"
+    if "$WRAPPER_PATH" "$@" >"$block_out" 2>&1; then
+      blocked_ok=0
+      return
+    fi
+    grep -q "refused this account/auth command" "$block_out" || blocked_ok=0
+  }
+  doctor_expect_block login
+  doctor_expect_block logout
+  doctor_expect_block update
+  doctor_expect_block plugin login
+  doctor_expect_block mcp oauth
+  doctor_expect_block mcp -- oauth
+  if (( blocked_ok )); then
     echo "PASS account/auth command blocked"
   else
-    echo "FAIL account/auth block output unexpected"
+    echo "FAIL account/auth command was not blocked consistently"
     failed=1
   fi
   rm -f "$block_out"
   block_out=""
-  trap - RETURN
 
   return "$failed"
 }
 
 main() {
-  load_manifest
-
   case "${1:-}" in
     _session-hint)
       shift
@@ -656,6 +670,9 @@ main() {
       ;;
   esac
 
+  load_manifest
+  refuse_symlink_home "primary" "$A_HOME"
+  refuse_symlink_home "second" "$B_HOME"
   ensure_shared_paths
   ensure_shim
 

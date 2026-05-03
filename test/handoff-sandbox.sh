@@ -65,4 +65,14 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 fi
 grep -q "refused to overwrite different primary session file" "$SANDBOX/refuse.out"
 
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff "../../bad" >"$SANDBOX/bad-id.out" 2>&1; then
+  echo "FAIL malformed handoff session id was not refused"
+  exit 1
+fi
+grep -q "refused malformed session id" "$SANDBOX/bad-id.out"
+
 echo "PASS handoff sandbox"

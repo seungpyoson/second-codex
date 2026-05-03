@@ -48,12 +48,39 @@ assert_missing_file() {
   fi
 }
 
+assert_blocked() {
+  local name="$1"
+  shift
+  if run_wrapper "$@" >"$SANDBOX/$name.out" 2>&1; then
+    echo "FAIL $* was not blocked"
+    exit 1
+  fi
+  assert_grep "refused this account/auth command" "$SANDBOX/$name.out"
+}
+
+assert_rerouted() {
+  local name="$1"
+  shift
+  run_wrapper "$@" >"$SANDBOX/$name.out" 2>&1
+  assert_grep "rerouting environment/config change" "$SANDBOX/$name.out"
+  assert_grep "home=$SANDBOX/home-a args=$*" "$SANDBOX/codex.log"
+}
+
 if run_wrapper login >"$SANDBOX/login.out" 2>&1; then
   echo "FAIL login was not blocked"
   exit 1
 fi
 assert_grep "refused this account/auth command" "$SANDBOX/login.out"
 assert_missing_file "$SANDBOX/codex.log"
+
+assert_blocked unknown-flag-login --unknown-future-flag value login
+assert_blocked mcp-profile-oauth mcp -p default oauth
+assert_blocked mcp-separator-oauth mcp -- oauth
+assert_blocked plugin-marketplace-login plugin marketplace login
+assert_blocked skill-marketplace-login skill marketplace login
+assert_blocked app-marketplace-login app marketplace login
+assert_blocked features-login features login
+assert_blocked upgrade upgrade
 
 run_wrapper login status
 assert_grep "home=$SANDBOX/home-second args=login status" "$SANDBOX/codex.log"
@@ -66,10 +93,21 @@ run_wrapper --enable goals features enable another-feature >"$SANDBOX/features.o
 assert_grep "rerouting environment/config change" "$SANDBOX/features.out"
 assert_grep "home=$SANDBOX/home-a args=--enable goals features enable another-feature" "$SANDBOX/codex.log"
 
+assert_rerouted mcp-config mcp config
+assert_rerouted plugin-marketplace-add plugin marketplace add sample
+assert_rerouted plugin-marketplace-upgrade plugin marketplace upgrade sample
+assert_rerouted skill-install skill install sample
+assert_rerouted features-enable features enable direct-feature
+assert_rerouted trust trust
+
 if run_wrapper plugin login >"$SANDBOX/plugin-login.out" 2>&1; then
   echo "FAIL plugin login was not blocked"
   exit 1
 fi
 assert_grep "refused this account/auth command" "$SANDBOX/plugin-login.out"
+assert_blocked mcp-oauth mcp oauth
+assert_blocked plugin-auth plugin auth
+assert_blocked skill-login skill login
+assert_blocked app-oauth app oauth
 
 echo "PASS classify sandbox"

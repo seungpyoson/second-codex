@@ -23,4 +23,17 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
 SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 SECOND_CODEX_DOCTOR_SHOW_EMAIL=1 \
-"$REPO_ROOT/second-codex" doctor
+"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor.out"
+
+grep -q "PASS no unknown primary CODEX_HOME entries" "$SANDBOX/doctor.out"
+grep -q "PASS no unknown second CODEX_HOME entries" "$SANDBOX/doctor.out"
+grep -q "PASS memories symlink to primary" "$SANDBOX/doctor.out"
+grep -q "PASS memories_extensions symlink to primary" "$SANDBOX/doctor.out"
+grep -q "PASS shim exists in owned non-symlink directory" "$SANDBOX/doctor.out"
+grep -q "PASS account/auth command blocked" "$SANDBOX/doctor.out"
+if grep -q "^FAIL " "$SANDBOX/doctor.out"; then
+  cat "$SANDBOX/doctor.out"
+  exit 1
+fi
+
+cat "$SANDBOX/doctor.out"
