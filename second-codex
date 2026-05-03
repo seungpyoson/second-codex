@@ -589,7 +589,13 @@ session_file_contains_id() {
 import json, sys
 from pathlib import Path
 
-text = "".join(Path(sys.argv[1]).read_text(errors="replace").splitlines(True)[:25]).lstrip()
+lines = []
+with Path(sys.argv[1]).open("r", encoding="utf-8", errors="replace") as fh:
+    for idx, line in enumerate(fh):
+        if idx >= 25:
+            break
+        lines.append(line)
+text = "".join(lines).lstrip()
 session_id = sys.argv[2]
 decoder = json.JSONDecoder()
 while text:
