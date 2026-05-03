@@ -75,4 +75,26 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 fi
 grep -q "refused malformed session id" "$SANDBOX/bad-id.out"
 
+PRIMARY_ONLY_SESSION_ID="00000000-0000-7000-8000-000000000003"
+PRIMARY_ONLY_REL="2026/05/03/rollout-2026-05-03T19-05-47-$PRIMARY_ONLY_SESSION_ID.jsonl"
+mkdir -p "$SANDBOX/home-a/sessions/2026/05/03"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$PRIMARY_ONLY_SESSION_ID","ts":1760000002,"text":"primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$PRIMARY_ONLY_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$PRIMARY_ONLY_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume "$PRIMARY_ONLY_SESSION_ID" >"$SANDBOX/primary-only-resume.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/primary-only-resume.out"
+cmp -s "$SANDBOX/home-a/sessions/$PRIMARY_ONLY_REL" "$SANDBOX/home-second/sessions/$PRIMARY_ONLY_REL"
+grep -Fq "\"session_id\":\"$PRIMARY_ONLY_SESSION_ID\"" "$SANDBOX/home-second/history.jsonl"
+
 echo "PASS handoff sandbox"

@@ -64,7 +64,7 @@ __second_codex_session_hint() {
 codex() {
   command codex "$@"
   local rc=$?
-  if __second_codex_should_print_session_hint "$@"; then
+  if (( rc == 0 )) && __second_codex_should_print_session_hint "$@"; then
     __second_codex_session_hint primary
   fi
   return $rc
@@ -74,7 +74,7 @@ second-codex() {
   local helper_dir="$(__second_codex_helper_dir)"
   "$helper_dir/second-codex" "$@"
   local rc=$?
-  if __second_codex_should_print_session_hint "$@"; then
+  if (( rc == 0 )) && __second_codex_should_print_session_hint "$@"; then
     __second_codex_session_hint second
   fi
   return $rc
