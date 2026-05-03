@@ -112,21 +112,21 @@ fail_on_unknown_entries() {
   return 65
 }
 
-warn_unknown_entries() {
-  local unknown
-  unknown="$(unknown_entries "$A_HOME")"
-  [[ -z "$unknown" ]] && return 0
-  {
-    echo "second-codex: unknown top-level entries in primary CODEX_HOME:"
-    printf '%s\n' "$unknown" | sed 's/^/  - /'
-    echo "Run: second-codex doctor"
-  } >&2
-}
-
 reroute_notice() {
   cat >&2 <<EOF
 second-codex: rerouting environment/config change to primary CODEX_HOME: $A_HOME
 EOF
+}
+
+option_takes_value() {
+  case "$1" in
+    -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 classify_command() {
@@ -134,21 +134,22 @@ classify_command() {
   local i=0
   while (( i < ${#args[@]} )); do
     case "${args[$i]}" in
-      --config=*|--model=*|--profile=*|--sandbox=*|--cd=*|--ask-for-approval=*|--remote=*|--remote-auth-token-env=*|--add-dir=*|--local-provider=*|--download-url=*|--enable=*|--disable=*|--image=*)
+      --*=*)
         i=$((i + 1))
-        ;;
-      -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image)
-        if (( i + 1 >= ${#args[@]} )); then
-          break
-        fi
-        i=$((i + 2))
         ;;
       --)
         i=$((i + 1))
         break
         ;;
       -*)
-        i=$((i + 1))
+        if ! option_takes_value "${args[$i]}"; then
+          i=$((i + 1))
+          continue
+        fi
+        if (( i + 1 >= ${#args[@]} )); then
+          break
+        fi
+        i=$((i + 2))
         ;;
       *)
         break
@@ -368,7 +369,6 @@ main() {
     return 64
   fi
 
-  warn_unknown_entries
   sync_projection
   case "$classification" in
     reroute)
