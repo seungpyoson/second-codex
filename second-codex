@@ -43,6 +43,28 @@ option_takes_no_value() {
   esac
 }
 
+resume_option_takes_no_value() {
+  case "$1" in
+    --last|--all|--include-non-interactive)
+      return 0
+      ;;
+    *)
+      option_takes_no_value "$1"
+      ;;
+  esac
+}
+
+resume_option_suppresses_session_arg() {
+  case "$1" in
+    --last|--last=*|-h|--help|--help=*|-V|--version|--version=*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 find_manifest() {
   local script_dir
   script_dir="$(cd "$(dirname "$WRAPPER_PATH")" && pwd)"
@@ -499,46 +521,39 @@ for line in reversed(lines):
 
 best = None
 session_id_pattern = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
-def path_mtime(path):
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0
 
 try:
-    paths = sorted(sessions.rglob("*.jsonl"), key=path_mtime, reverse=True)
+    for path in sessions.rglob("*.jsonl"):
+        filename_ids = [match.group(0) for match in session_id_pattern.finditer(path.name)]
+        if not filename_ids:
+            continue
+        candidate_ids = [session_id for session_id in filename_ids if session_id in recent_rank]
+        if not candidate_ids:
+            continue
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                for idx, line in enumerate(fh):
+                    if idx >= 25:
+                        break
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if item.get("type") != "session_meta":
+                        continue
+                    payload = item.get("payload") or {}
+                    found_id = payload.get("id")
+                    if payload.get("cwd") != cwd or found_id not in recent_rank:
+                        break
+                    rank = recent_rank[found_id]
+                    if best is None or rank < best[0]:
+                        best = (rank, found_id)
+                    break
+        except OSError:
+            continue
 except OSError as exc:
     print(f"second-codex could not scan Codex sessions: {exc}", file=sys.stderr)
     raise SystemExit(67)
-
-for path in paths:
-    filename_ids = [match.group(0) for match in session_id_pattern.finditer(path.name)]
-    if not filename_ids:
-        continue
-    candidate_ids = [session_id for session_id in filename_ids if session_id in recent_rank]
-    if not candidate_ids:
-        continue
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            for idx, line in enumerate(fh):
-                if idx >= 25:
-                    break
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if item.get("type") != "session_meta":
-                    continue
-                payload = item.get("payload") or {}
-                found_id = payload.get("id")
-                if payload.get("cwd") != cwd or found_id not in recent_rank:
-                    break
-                rank = recent_rank[found_id]
-                if best is None or rank < best[0]:
-                    best = (rank, found_id)
-                break
-    except OSError:
-        continue
 
 if best:
     print(best[1])
@@ -695,7 +710,7 @@ copy_session_between_homes() {
     fi
   else
     cp "$source_session_file" "$target_session_file"
-    chmod 600 "$target_session_file" 2>/dev/null || true
+    chmod 600 "$target_session_file"
   fi
   printf '%s\n' "$target_session_file"
 }
@@ -755,7 +770,7 @@ EOF
 
 find_resume_session_arg() {
   local args=("$@")
-  local i=0 arg next
+  local i=0 arg
   while (( i < ${#args[@]} )); do
     arg="${args[$i]}"
     case "$arg" in
@@ -775,14 +790,41 @@ find_resume_session_arg() {
         fi
         ;;
       resume)
-        next="${args[$((i + 1))]:-}"
-        if [[ "$next" == "--" ]]; then
-          next="${args[$((i + 2))]:-}"
-        fi
-        if [[ -n "$next" && "$next" != --* ]] && is_valid_session_id "$next"; then
-          printf '%s\n' "$next"
-          return 0
-        fi
+        i=$((i + 1))
+        while (( i < ${#args[@]} )); do
+          arg="${args[$i]}"
+          case "$arg" in
+            --)
+              i=$((i + 1))
+              if (( i < ${#args[@]} )) && is_valid_session_id "${args[$i]}"; then
+                printf '%s\n' "${args[$i]}"
+                return 0
+              fi
+              return 1
+              ;;
+            --*=*)
+              resume_option_suppresses_session_arg "$arg" && return 1
+              i=$((i + 1))
+              ;;
+            -*)
+              resume_option_suppresses_session_arg "$arg" && return 1
+              if resume_option_takes_no_value "$arg"; then
+                i=$((i + 1))
+              elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
+                i=$((i + 2))
+              else
+                i=$((i + 1))
+              fi
+              ;;
+            *)
+              if is_valid_session_id "$arg"; then
+                printf '%s\n' "$arg"
+                return 0
+              fi
+              return 1
+              ;;
+          esac
+        done
         return 1
         ;;
       *)
@@ -917,7 +959,7 @@ ensure_shim() {
     echo "second-codex refused to use symlinked shim directory: $BIN_DIR" >&2
     return 73
   fi
-  mkdir -p "$BIN_DIR"
+  (umask 077; mkdir -p "$BIN_DIR")
   chmod 700 "$BIN_DIR"
   local owner_uid
   owner_uid="$(stat -f '%u' "$BIN_DIR" 2>/dev/null || stat -c '%u' "$BIN_DIR")"
@@ -932,7 +974,7 @@ ensure_shim() {
     return 73
   fi
   if [[ -n "$REAL_CODEX" && "$REAL_CODEX" == "$BIN_DIR/codex" ]]; then
-    echo "second-codex refused recursive codex shim resolution: $REAL_CODEX" >&2
+    echo "second-codex refused recursive codex shim resolution: $REAL_CODEX; set SECOND_CODEX_SWITCH_REAL_CODEX to the real codex binary or remove the stale shim from PATH" >&2
     return 69
   fi
   local tmp_shim
@@ -1045,6 +1087,7 @@ doctor() {
 
   local block_out=""
   block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
+  trap 'rm -f "${block_out:-}"' RETURN
   local blocked_ok=1
   doctor_command_is_blocked "$block_out" login || blocked_ok=0
   doctor_command_is_blocked "$block_out" logout || blocked_ok=0
@@ -1063,6 +1106,7 @@ doctor() {
   fi
   rm -f "$block_out"
   block_out=""
+  trap - RETURN
 
   return "$failed"
 }

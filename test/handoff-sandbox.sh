@@ -317,6 +317,155 @@ fi
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/separator-resume.out"
 cmp -s "$SANDBOX/home-a/sessions/$SEPARATOR_RESUME_REL" "$SANDBOX/home-second/sessions/$SEPARATOR_RESUME_REL"
 
+RESUME_ALL_SESSION_ID="00000000-0000-7000-8000-000000000014"
+RESUME_ALL_REL="2026/05/03/rollout-2026-05-03T19-15-47-$RESUME_ALL_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_ALL_SESSION_ID","ts":1760000014,"text":"resume all primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_ALL_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_ALL_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume --all "$RESUME_ALL_SESSION_ID" >"$SANDBOX/resume-all.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-all.out"
+cmp -s "$SANDBOX/home-a/sessions/$RESUME_ALL_REL" "$SANDBOX/home-second/sessions/$RESUME_ALL_REL"
+
+RESUME_INCLUDE_SESSION_ID="00000000-0000-7000-8000-000000000015"
+RESUME_INCLUDE_REL="2026/05/03/rollout-2026-05-03T19-16-47-$RESUME_INCLUDE_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_INCLUDE_SESSION_ID","ts":1760000015,"text":"resume include primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_INCLUDE_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_INCLUDE_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume --include-non-interactive "$RESUME_INCLUDE_SESSION_ID" >"$SANDBOX/resume-include.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-include.out"
+cmp -s "$SANDBOX/home-a/sessions/$RESUME_INCLUDE_REL" "$SANDBOX/home-second/sessions/$RESUME_INCLUDE_REL"
+
+RESUME_CONFIG_SESSION_ID="00000000-0000-7000-8000-000000000016"
+RESUME_CONFIG_REL="2026/05/03/rollout-2026-05-03T19-17-47-$RESUME_CONFIG_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_CONFIG_SESSION_ID","ts":1760000016,"text":"resume config primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_CONFIG_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_CONFIG_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume -c model=gpt-5.5 "$RESUME_CONFIG_SESSION_ID" >"$SANDBOX/resume-config.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-config.out"
+cmp -s "$SANDBOX/home-a/sessions/$RESUME_CONFIG_REL" "$SANDBOX/home-second/sessions/$RESUME_CONFIG_REL"
+
+RESUME_REMOTE_SESSION_ID="00000000-0000-7000-8000-000000000017"
+RESUME_REMOTE_REL="2026/05/03/rollout-2026-05-03T19-18-47-$RESUME_REMOTE_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_REMOTE_SESSION_ID","ts":1760000017,"text":"resume remote primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_REMOTE_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_REMOTE_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume --remote ws://127.0.0.1:1 "$RESUME_REMOTE_SESSION_ID" >"$SANDBOX/resume-remote.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-remote.out"
+cmp -s "$SANDBOX/home-a/sessions/$RESUME_REMOTE_REL" "$SANDBOX/home-second/sessions/$RESUME_REMOTE_REL"
+
+RESUME_LAST_PROMPT_SESSION_ID="00000000-0000-7000-8000-000000000018"
+RESUME_LAST_PROMPT_REL="2026/05/03/rollout-2026-05-03T19-19-47-$RESUME_LAST_PROMPT_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_LAST_PROMPT_SESSION_ID","ts":1760000018,"text":"resume last prompt primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_LAST_PROMPT_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_LAST_PROMPT_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume --last "$RESUME_LAST_PROMPT_SESSION_ID" >"$SANDBOX/resume-last-prompt.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+if grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-last-prompt.out"; then
+  echo "FAIL resume --last prompt text triggered primary session import"
+  exit 1
+fi
+test ! -e "$SANDBOX/home-second/sessions/$RESUME_LAST_PROMPT_REL"
+
+RESUME_HELP_PROMPT_SESSION_ID="00000000-0000-7000-8000-000000000019"
+RESUME_HELP_PROMPT_REL="2026/05/03/rollout-2026-05-03T19-20-47-$RESUME_HELP_PROMPT_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_HELP_PROMPT_SESSION_ID","ts":1760000019,"text":"resume help prompt primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_HELP_PROMPT_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_HELP_PROMPT_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume --help "$RESUME_HELP_PROMPT_SESSION_ID" >"$SANDBOX/resume-help-prompt.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+if grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-help-prompt.out"; then
+  echo "FAIL resume --help prompt text triggered primary session import"
+  exit 1
+fi
+test ! -e "$SANDBOX/home-second/sessions/$RESUME_HELP_PROMPT_REL"
+
+RESUME_SHORT_HELP_PROMPT_SESSION_ID="00000000-0000-7000-8000-000000000020"
+RESUME_SHORT_HELP_PROMPT_REL="2026/05/03/rollout-2026-05-03T19-21-47-$RESUME_SHORT_HELP_PROMPT_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_SHORT_HELP_PROMPT_SESSION_ID","ts":1760000020,"text":"resume short help prompt primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_SHORT_HELP_PROMPT_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_SHORT_HELP_PROMPT_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume -h "$RESUME_SHORT_HELP_PROMPT_SESSION_ID" >"$SANDBOX/resume-short-help-prompt.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+if grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-short-help-prompt.out"; then
+  echo "FAIL resume -h prompt text triggered primary session import"
+  exit 1
+fi
+test ! -e "$SANDBOX/home-second/sessions/$RESUME_SHORT_HELP_PROMPT_REL"
+
 COLLISION_IMPORT_SESSION_ID="00000000-0000-7000-8000-000000000012"
 COLLISION_IMPORT_REL="2026/05/03/rollout-2026-05-03T19-13-47-$COLLISION_IMPORT_SESSION_ID.jsonl"
 cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
