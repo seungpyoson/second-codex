@@ -38,7 +38,8 @@ link_shared_path memories_extensions
 
 ZSHRC="${ZSHRC:-$HOME/.zshrc}"
 LINE="source $(shell_quote "$INSTALL_ROOT/second-codex-shell.zsh")"
-if [ -f "$ZSHRC" ] && grep -Fxq "$LINE" "$ZSHRC"; then
+LEGACY_LINE="source $INSTALL_ROOT/second-codex-shell.zsh"
+if [ -f "$ZSHRC" ] && { grep -Fxq "$LINE" "$ZSHRC" || grep -Fxq "$LEGACY_LINE" "$ZSHRC"; }; then
   echo "second-codex shell helper already sourced in $ZSHRC"
 else
   printf '\n%s\n' "$LINE" >> "$ZSHRC"
