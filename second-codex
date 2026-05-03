@@ -5,7 +5,7 @@ ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 A_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 B_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
 BIN_DIR="${SECOND_CODEX_SHIM_DIR:-${TMPDIR:-/tmp}/second-codex-shim-$(id -u)}"
-WRAPPER_PATH="${BASH_SOURCE[0]}"
+WRAPPER_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex || true)}"
 
 ACCOUNT_PATTERNS=()
@@ -235,7 +235,7 @@ sync_projection() {
   fail_on_unknown_entries "second" "$B_HOME"
   local excludes=()
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
-    excludes+=(--exclude="$pattern")
+    excludes+=(--exclude="/$pattern")
   done
   rsync -a --delete "${excludes[@]}" "$A_HOME/" "$B_HOME/"
 }
@@ -337,7 +337,7 @@ doctor() {
 
   local block_out
   block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
-  if "$0" mcp logout doctor-auth-check >"$block_out" 2>&1; then
+  if "$WRAPPER_PATH" mcp logout doctor-auth-check >"$block_out" 2>&1; then
     echo "FAIL account/auth command was not blocked"
     failed=1
   elif grep -q "refused this account/auth command" "$block_out"; then
