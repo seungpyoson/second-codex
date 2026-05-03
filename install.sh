@@ -4,15 +4,15 @@ set -euo pipefail
 INSTALL_ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 PRIMARY_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 SECOND_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
+
+shell_quote() {
+  local value="${1//\'/\'\\\'\'}"
+  printf "'%s'" "$value"
+}
+
 mkdir -p "$INSTALL_ROOT"
 cp "$(dirname "$0")/second-codex" "$INSTALL_ROOT/second-codex"
-cat > "$INSTALL_ROOT/second-codex-shell.zsh" <<SH
-# Codex second account convenience command.
-# Primary ~/.codex remains the source of truth for settings/environment.
-second-codex() {
-  "$INSTALL_ROOT/second-codex" "\$@"
-}
-SH
+cp "$(dirname "$0")/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
 cp "$(dirname "$0")/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
 cp "$(dirname "$0")/README.md" "$INSTALL_ROOT/README.md"
 chmod +x "$INSTALL_ROOT/second-codex"
@@ -37,7 +37,7 @@ link_shared_path memories
 link_shared_path memories_extensions
 
 ZSHRC="${ZSHRC:-$HOME/.zshrc}"
-LINE="source \"$INSTALL_ROOT/second-codex-shell.zsh\""
+LINE="source $(shell_quote "$INSTALL_ROOT/second-codex-shell.zsh")"
 if [ -f "$ZSHRC" ] && grep -Fxq "$LINE" "$ZSHRC"; then
   echo "second-codex shell helper already sourced in $ZSHRC"
 else

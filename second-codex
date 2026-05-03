@@ -112,6 +112,27 @@ fail_on_unknown_entries() {
   return 65
 }
 
+ensure_shared_path() {
+  local name="$1"
+  local target="$A_HOME/$name"
+  local link="$B_HOME/$name"
+
+  mkdir -p "$target" "$B_HOME"
+  if [[ -L "$link" && "$(readlink "$link")" == "$target" ]]; then
+    return 0
+  fi
+  if [[ -e "$link" || -L "$link" ]]; then
+    echo "second-codex refused to replace existing $link; move it aside, then rerun." >&2
+    return 73
+  fi
+  ln -s "$target" "$link"
+}
+
+ensure_shared_paths() {
+  ensure_shared_path memories
+  ensure_shared_path memories_extensions
+}
+
 reroute_notice() {
   cat >&2 <<EOF
 second-codex: rerouting environment/config change to primary CODEX_HOME: $A_HOME
@@ -176,7 +197,11 @@ classify_command() {
       ;;
     plugin|plugins)
       case "$subcommand" in
-        install|uninstall|add|remove|rm|delete|del|update|enable|disable|login|auth)
+        login|auth|oauth|logout)
+          echo block
+          return
+          ;;
+        install|uninstall|add|remove|rm|delete|del|update|enable|disable)
           echo reroute
           return
           ;;
@@ -192,7 +217,11 @@ classify_command() {
       ;;
     skill|skills|app|apps)
       case "$subcommand" in
-        install|uninstall|add|remove|rm|delete|del|update|enable|disable|login|auth)
+        login|auth|oauth|logout)
+          echo block
+          return
+          ;;
+        install|uninstall|add|remove|rm|delete|del|update|enable|disable)
           echo reroute
           return
           ;;
@@ -354,6 +383,7 @@ doctor() {
 
 main() {
   load_manifest
+  ensure_shared_paths
   ensure_shim
 
   if [[ "${1:-}" == "doctor" ]]; then

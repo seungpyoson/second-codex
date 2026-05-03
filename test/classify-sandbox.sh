@@ -66,4 +66,10 @@ run_wrapper --enable goals features enable another-feature >"$SANDBOX/features.o
 assert_grep "rerouting environment/config change" "$SANDBOX/features.out"
 assert_grep "home=$SANDBOX/home-a args=--enable goals features enable another-feature" "$SANDBOX/codex.log"
 
+if run_wrapper plugin login >"$SANDBOX/plugin-login.out" 2>&1; then
+  echo "FAIL plugin login was not blocked"
+  exit 1
+fi
+assert_grep "refused this account/auth command" "$SANDBOX/plugin-login.out"
+
 echo "PASS classify sandbox"
