@@ -101,13 +101,21 @@ second-codex handoff-from-claude <claude_session_id>
 codex resume <new_uuid>
 ```
 
-What is preserved: text turns, tool calls and results (with linkage), `cwd` context.
+What is preserved: text turns, tool calls and results (with linkage for the mapped pair), `cwd` context, source per-record timestamps.
 
-What is dropped on cross-vendor: reasoning / thinking blocks (vendor-issued cryptographic signatures cannot round-trip), Claude Code hook attachment records, file-history-snapshot records.
+What is dropped on cross-vendor:
 
-Tool taxonomy is mapped where possible (e.g. Claude `Bash` ↔ Codex `exec_command`); unmapped tools pass their name through unchanged and may render as raw arguments on the receiving side.
+- Reasoning / thinking blocks — vendor-issued cryptographic signatures (`signature`, `encrypted_content`) cannot round-trip, and including them causes the receiving API to reject the turn.
+- Claude `attachment` (hook telemetry) and `file-history-snapshot` records — the load-bearing content is already in the corresponding `tool_result` blocks.
+- Codex `agent_message` events — corpus scan shows ~94% are duplicates of a neighboring `response_item.message` (final assistant turn) and ~6% are intermediate streaming status pings the source model emitted but never published. Adding a handler would duplicate assistant content for the bulk case.
+- Other Codex `event_msg` metadata: `token_count`, `exec_command_end`, `patch_apply_end`, `mcp_tool_call_end`, `guardian_assessment`, `collab_*`, `web_search_end`, `context_compacted`, `thread_name_updated`, `error`, `dynamic_tool_call_request`, `agent_reasoning`.
+- Claude UI/internal records: `system`, `progress`, `last-prompt`, `permission-mode`, `queue-operation`, `pr-link`, `summary`, `custom-title`, `agent-name`.
 
-Both converters require `python3`. The receiver's native resume validates schema; an unrecognized rollout is rejected without side effects on the source session.
+Tool taxonomy: only `Bash` ↔ `exec_command` round-trips structurally as a native tool call. Every other tool — Codex `custom_tool_call` (e.g. `apply_patch`), `web_search_call`, `tool_search_call`, and any Claude tool other than Bash — is folded into a descriptive text block (`[Used <vendor> tool \`<name>\` with input/arguments: ...]`) so the receiving model still sees the tool history without the receiving API having to recognize a foreign tool schema. Bash → exec_command is also slightly lossy: Claude's Bash input has no per-call workdir field, so every converted exec_command call inherits the session-level `cwd`.
+
+Genuinely unknown record types (a future Codex/Claude schema addition not in the documented drop-list) emit a stderr warning and are dropped, surfacing schema drift instead of letting it become silent loss.
+
+Both converters require `python3`. The receiver's native resume validates schema; an unrecognized rollout is rejected without side effects on the source session. Resume against a converted session has not yet been validated end-to-end against `claude --resume` and `codex resume` in CI — structural tests cover the JSONL shape, not the receiver's acceptance behavior.
 
 ## Security Notes
 

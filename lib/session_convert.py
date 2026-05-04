@@ -18,9 +18,11 @@ Conversion semantics:
 - Text turns translate role-for-role (user / assistant).
 - Tool calls round-trip structurally only when both sides recognize the
   tool; the cross-vendor mapping is deliberately narrow (Bash <->
-  exec_command). Unmapped tools fold into descriptive text blocks so the
-  receiving model still sees the prior tool history without depending on
-  the receiving API to recognize a foreign tool name.
+  exec_command). Unmapped tools (including Codex `custom_tool_call`,
+  `web_search_call`, `tool_search_call`, and any Claude tool other than
+  Bash) fold into descriptive text blocks so the receiving model still
+  sees the prior tool history without depending on the receiving API to
+  recognize a foreign tool name.
 - Reasoning / thinking blocks are dropped on cross-vendor handoff. Both
   vendors store reasoning with cryptographic signatures (Claude
   `signature`, Codex `encrypted_content`) that cannot round-trip across
@@ -28,11 +30,31 @@ Conversion semantics:
 - Codex `turn_aborted` markers cause the response_items emitted since the
   most recent `task_started` to be discarded, matching the source model's
   view that those items were never committed.
+- Codex `agent_message` events are dropped intentionally: empirical corpus
+  scan (60 rollouts / 6164 records, 2026-05-04 local data) shows 94% are
+  duplicates of a neighboring `response_item.message` and the remaining
+  ~6% are intermediate streaming pings the source model emitted during a
+  turn but never published. Adding a handler would duplicate the bulk of
+  assistant content. Other event_msg types (`token_count`, `exec_command_end`,
+  `patch_apply_end`, `mcp_tool_call_end`, `guardian_assessment`, `collab_*`,
+  `web_search_end`, `context_compacted`, `thread_name_updated`, `error`,
+  `dynamic_tool_call_request`, `agent_reasoning`) are also dropped — they
+  are streaming/metadata not load-bearing for resume context.
 - Claude `attachment` (hook telemetry) and `file-history-snapshot` records
   are dropped: their information is already present in the corresponding
   `tool_result` content (what the source model actually saw), or is
   Claude Code-internal bookkeeping not load-bearing for conversation
-  continuation.
+  continuation. Claude `system`, `progress`, `last-prompt`, `permission-mode`,
+  `queue-operation`, `pr-link`, `summary`, `custom-title`, `agent-name`
+  records are also dropped (UI/internal bookkeeping).
+- Bash tool calls translate to/from Codex `exec_command`, but per-call
+  workdir is lossy in the Claude→Codex direction: Claude's Bash tool input
+  has no per-call workdir field, so every converted exec_command call
+  inherits the session-level `cwd`. Real per-call workdirs are not
+  recoverable from the Claude transcript.
+- Genuinely unknown record types (a future Codex schema addition not in
+  the documented drop-list) emit a stderr warning and are dropped. This
+  surfaces silent loss instead of letting it accumulate.
 - Source `cwd` is read from the most recent record that carries one;
   runtime cwd at resume time overrides per receiver behavior.
 """
@@ -44,12 +66,26 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+
+def _install_sigterm_handler() -> None:
+    """Promote SIGTERM to SystemExit so write_jsonl's BaseException cleanup
+    block runs and the .tmp file is unlinked. Default SIGTERM behavior on
+    POSIX terminates the process without raising, leaving stale tmp files."""
+    def _raise_systemexit(_signum: int, _frame: Any) -> None:
+        raise SystemExit(143)
+    try:
+        signal.signal(signal.SIGTERM, _raise_systemexit)
+    except (ValueError, OSError):
+        # Non-main thread or platform without signal support; best-effort.
+        pass
 
 
 def _codex_session_bases() -> list[Path]:
@@ -77,6 +113,59 @@ CODEX_TO_CLAUDE_TOOL = {
     "exec_command": "Bash",
     "shell": "Bash",
 }
+
+
+# Documented dispatch contracts. Anything not in HANDLED ∪ DOCUMENTED_DROP
+# is treated as a future-schema unknown and triggers a stderr warning so
+# silent data loss does not accumulate as Codex/Claude evolve. Update these
+# sets together with the docstring above when adding handlers or when a new
+# record type's drop is intentional.
+_CODEX_RESPONSE_ITEM_HANDLED: frozenset[str] = frozenset({
+    "message", "function_call", "function_call_output",
+    "custom_tool_call", "custom_tool_call_output",
+    "web_search_call", "tool_search_call", "tool_search_output",
+})
+_CODEX_RESPONSE_ITEM_DOCUMENTED_DROP: frozenset[str] = frozenset({
+    "reasoning",
+})
+_CODEX_EVENT_MSG_HANDLED: frozenset[str] = frozenset({
+    "user_message", "task_started", "task_complete", "turn_aborted",
+})
+_CODEX_EVENT_MSG_DOCUMENTED_DROP: frozenset[str] = frozenset({
+    "agent_message", "agent_reasoning",
+    "token_count", "exec_command_end", "patch_apply_end",
+    "mcp_tool_call_end", "guardian_assessment",
+    "collab_waiting_end", "collab_agent_spawn_end",
+    "collab_close_end", "collab_agent_interaction_end",
+    "web_search_end", "context_compacted", "thread_name_updated",
+    "error", "dynamic_tool_call_request",
+})
+_CLAUDE_RECORD_HANDLED: frozenset[str] = frozenset({
+    "user", "assistant",
+})
+_CLAUDE_RECORD_DOCUMENTED_DROP: frozenset[str] = frozenset({
+    "attachment", "file-history-snapshot", "system", "progress",
+    "last-prompt", "permission-mode", "queue-operation", "pr-link",
+    "summary", "custom-title", "agent-name",
+})
+
+
+def _warn_unknown(category: str, kind: str, seen: set[str]) -> None:
+    """Emit a single stderr warning per unknown (category, kind) pair.
+
+    Deduped because real sessions can carry hundreds of the same unknown
+    type and a per-record warning would flood stderr. Once-per-kind is
+    enough to surface the schema gap.
+    """
+    key = f"{category}:{kind}"
+    if key in seen:
+        return
+    seen.add(key)
+    sys.stderr.write(
+        f"session_convert: warning: unhandled {category} type {kind!r} "
+        f"(future Codex/Claude schema?). Records of this type are dropped; "
+        f"add a handler or extend DOCUMENTED_DROP if drop is intentional.\n"
+    )
 
 
 def gen_uuid_v7() -> str:
@@ -158,8 +247,10 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     out = []
     # encoding="utf-8" is explicit so behavior does not depend on
     # locale.getpreferredencoding(); under PYTHONUTF8=0 LC_ALL=C the default
-    # is ASCII and any non-ASCII byte raises UnicodeDecodeError.
-    with path.open(encoding="utf-8") as f:
+    # is ASCII. errors="replace" keeps a stray non-UTF-8 byte from raising
+    # UnicodeDecodeError mid-stream — invalid bytes become �, the line
+    # then either parses (rare) or fails json.loads with a clear warning.
+    with path.open(encoding="utf-8", errors="replace") as f:
         for lineno, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
@@ -321,6 +412,8 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
     parent_uuid: str | None = None
     call_id_to_tool_id: dict[str, str] = {}
     unknown_call_ids: set[str] = set()
+    custom_tool_call_ids: set[str] = set()
+    warned_unknowns: set[str] = set()
     # Tracks the source record's timestamp for the current loop iteration so
     # converted records inherit it (preserving session ordering across the
     # handoff). Falls back to now_iso() when the source record has none.
@@ -351,17 +444,35 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         current_source_ts = ts_field if isinstance(ts_field, str) else None
         rtype = r.get("type")
         payload = r.get("payload", {}) if isinstance(r.get("payload"), dict) else {}
-        if rtype == "event_msg" and payload.get("type") == "user_message":
-            text = payload.get("message", "")
-            if not text:
+        if rtype == "event_msg":
+            ev_ptype = payload.get("type")
+            if ev_ptype == "user_message":
+                text = payload.get("message", "")
+                if not text:
+                    continue
+                out.append(make_record(
+                    "user",
+                    {"role": "user", "content": [{"type": "text", "text": text}]},
+                ))
                 continue
-            out.append(make_record(
-                "user",
-                {"role": "user", "content": [{"type": "text", "text": text}]},
-            ))
+            # task_started / task_complete / turn_aborted are handled upstream
+            # by _records_after_aborts_filtered; they're no-ops here.
+            if ev_ptype in _CODEX_EVENT_MSG_HANDLED or ev_ptype in _CODEX_EVENT_MSG_DOCUMENTED_DROP:
+                continue
+            if isinstance(ev_ptype, str):
+                _warn_unknown("event_msg.payload", ev_ptype, warned_unknowns)
             continue
 
         if rtype != "response_item":
+            # session_meta / turn_context / compacted are documented drops on
+            # codex→claude. Top-level task_started/task_complete/turn_aborted
+            # are handled by the abort filter before this loop. Anything else
+            # is an unknown future top-level type; surface it.
+            if isinstance(rtype, str) and rtype not in {
+                "session_meta", "turn_context", "compacted",
+                "task_started", "task_complete", "turn_aborted",
+            }:
+                _warn_unknown("top-level", rtype, warned_unknowns)
             continue
 
         ptype = payload.get("type")
@@ -464,7 +575,85 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     {"type": "tool_result", "tool_use_id": tool_use_id, "content": str(output), "is_error": False},
                 ]},
             ))
-        # Drop reasoning, unknown, and other response_item types.
+        elif ptype == "custom_tool_call":
+            # Codex custom tools (e.g. apply_patch) carry a free-form `input`
+            # string instead of the function_call `arguments` JSON. Claude has
+            # no equivalent first-class tool, so fold to descriptive text —
+            # same shape as the unmapped function_call branch above.
+            call_id = payload.get("call_id", "")
+            tool_name = payload.get("name", "") or "custom_tool"
+            tool_input = payload.get("input", "")
+            preview = tool_input if isinstance(tool_input, str) else json.dumps(tool_input)
+            custom_tool_call_ids.add(call_id)
+            out.append(make_record(
+                "assistant",
+                {
+                    "id": f"msg_xfmt_{secrets.token_hex(8)}",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-opus-4-7",
+                    "content": [{"type": "text",
+                                 "text": f"[Used Codex tool `{tool_name}` with input: {preview}]"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                },
+                extras={"requestId": f"req_xfmt_{secrets.token_hex(8)}"},
+            ))
+        elif ptype == "custom_tool_call_output":
+            call_id = payload.get("call_id", "")
+            output = payload.get("output", "")
+            # Companion fold for a custom_tool_call (or orphan if the call
+            # record was filtered upstream — still surface the output so
+            # nothing is silently lost).
+            _ = call_id in custom_tool_call_ids
+            out.append(make_record(
+                "user",
+                {"role": "user", "content": [{"type": "text",
+                                              "text": f"[Tool result: {output}]"}]},
+            ))
+        elif ptype in ("web_search_call", "tool_search_call"):
+            # No call_id / output linkage in the schema — render the action
+            # (search query or open_page url) so the model still sees the
+            # search intent in the converted history.
+            action = payload.get("action") or {}
+            atype = action.get("type") if isinstance(action, dict) else ""
+            if atype == "search":
+                query = action.get("query") or ""
+                queries = action.get("queries") or []
+                detail = query or " | ".join(str(q) for q in queries)
+                summary = f"search: {detail}" if detail else "search"
+            elif atype == "open_page":
+                summary = f"open_page: {action.get('url', '')}"
+            else:
+                summary = json.dumps(action) if isinstance(action, (dict, list)) else "(no action)"
+            out.append(make_record(
+                "assistant",
+                {
+                    "id": f"msg_xfmt_{secrets.token_hex(8)}",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-opus-4-7",
+                    "content": [{"type": "text",
+                                 "text": f"[Used Codex tool `{ptype}` with action: {summary}]"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                },
+                extras={"requestId": f"req_xfmt_{secrets.token_hex(8)}"},
+            ))
+        elif ptype == "tool_search_output":
+            output = payload.get("output", "")
+            out.append(make_record(
+                "user",
+                {"role": "user", "content": [{"type": "text",
+                                              "text": f"[Tool result: {output}]"}]},
+            ))
+        elif ptype in _CODEX_RESPONSE_ITEM_DOCUMENTED_DROP:
+            # reasoning: cross-vendor unforgeable signature; drop is intentional.
+            continue
+        elif isinstance(ptype, str):
+            # Unknown future response_item type. Surface so silent loss does
+            # not accumulate as the schema evolves.
+            _warn_unknown("response_item.payload", ptype, warned_unknowns)
 
     target_path = claude_session_path(new_uuid, cwd)
     write_jsonl(target_path, out)
@@ -492,13 +681,17 @@ def _detect_codex_cli_version() -> str:
     Falls back to a sentinel rather than failing the conversion when codex
     is not installed or the output shape changes."""
     try:
+        # capture as bytes + manual decode with errors="replace" so this is
+        # immune to LC_ALL=C (text=True would raise UnicodeDecodeError if the
+        # codex binary ever emits a non-ASCII byte under an ASCII locale).
         res = subprocess.run(
-            ["codex", "--version"], capture_output=True, text=True, timeout=2
+            ["codex", "--version"], capture_output=True, timeout=2
         )
         if res.returncode == 0:
+            stdout = res.stdout.decode("utf-8", errors="replace") if res.stdout else ""
             # Output is like "OpenAI Codex v0.128.0 (research preview)" or
             # similar. Extract the first vN.N.N-shaped token if present.
-            m = re.search(r"v?(\d+\.\d+\.\d+)", res.stdout)
+            m = re.search(r"v?(\d+\.\d+\.\d+)", stdout)
             if m:
                 return m.group(1)
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
@@ -530,6 +723,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
 
     out: list[dict[str, Any]] = []
     tool_id_to_call_id: dict[str, str] = {}
+    warned_unknowns: set[str] = set()
 
     out.append({
         "timestamp": now_iso(),
@@ -573,6 +767,13 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         # give every record a distinct time.
         emit_n = 0
         rtype = r.get("type")
+        # Surface unknown Claude record types so silent loss doesn't grow as
+        # the Claude session schema evolves. Documented drops (system,
+        # progress, attachment, etc.) stay quiet.
+        if isinstance(rtype, str) and rtype not in _CLAUDE_RECORD_HANDLED \
+                and rtype not in _CLAUDE_RECORD_DOCUMENTED_DROP:
+            _warn_unknown("claude record", rtype, warned_unknowns)
+            continue
         message = r.get("message")
         if not isinstance(message, dict):
             continue
@@ -735,6 +936,7 @@ def _normalize_tool_input_to_codex(tool_name: str, input_obj: dict[str, Any], cw
 
 
 def main(argv: list[str] | None = None) -> int:
+    _install_sigterm_handler()
     parser = argparse.ArgumentParser(prog="session_convert", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 

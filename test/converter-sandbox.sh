@@ -743,4 +743,243 @@ assert texts_to_ts["no-ts marker"].endswith("Z") and len(texts_to_ts["no-ts mark
 print("now_iso() fallback for missing-timestamp records PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# T (Class A): custom_tool_call carries genuine content (e.g. apply_patch
+# input/output strings) that is NOT duplicated in any other record. Empirical
+# corpus scan (377 local rollouts, 2026-05-04): 1542 custom_tool_call + 1542
+# custom_tool_call_output records exist. Pre-fix the converter dropped them
+# silently; this test exercises the fold-to-text path so future schema
+# changes do not regress to silent loss.
+# ---------------------------------------------------------------------------
+TT_UUID="00000000-0000-7000-8000-00000000002c"
+TT_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-13-00-$TT_UUID.jsonl"
+cat > "$TT_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TT_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Apply the patch","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_CTC01","name":"apply_patch","input":"*** Begin Patch\n*** Update File: foo.txt\n@@\n-old line\n+CTC-PATCH-MARKER-PUMPKIN\n*** End Patch"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_CTC01","output":"CTC-OUTPUT-MARKER-RUTABAGA"}}
+EOF
+
+OUT="$SANDBOX/ctc.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TT_UUID" >"$OUT" 2>&1
+TT_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TT_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TT_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TT_NEW_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "apply_patch" in joined, f"custom_tool_call name lost; got {joined!r}"
+assert "CTC-PATCH-MARKER-PUMPKIN" in joined, f"custom_tool_call input content silently dropped; got {joined!r}"
+assert "CTC-OUTPUT-MARKER-RUTABAGA" in joined, f"custom_tool_call_output content silently dropped; got {joined!r}"
+# No tool_use blocks (custom_tool_call has no Claude equivalent — must fold).
+for r in records:
+    if r["type"] != "assistant":
+        continue
+    for block in r["message"]["content"]:
+        assert block.get("type") != "tool_use", "custom_tool_call leaked as tool_use"
+print("custom_tool_call/_output fold-to-text PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# U (Class A): web_search_call carries the search query (action.query and
+# action.queries) and intent (action.type=search/open_page). Empirical corpus
+# scan: 383 web_search_call records. Pre-fix dropped silently; the fold-to-
+# text path preserves the model's view of the search.
+# ---------------------------------------------------------------------------
+TU_UUID="00000000-0000-7000-8000-00000000002d"
+TU_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-14-00-$TU_UUID.jsonl"
+cat > "$TU_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TU_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Search","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"web_search_call","status":"completed","action":{"type":"search","query":"WSC-MARKER-CHESTNUT","queries":["WSC-MARKER-CHESTNUT"]}}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://docs.example.com/wsc-page"}}}
+EOF
+
+OUT="$SANDBOX/wsc.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TU_UUID" >"$OUT" 2>&1
+TU_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TU_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TU_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TU_NEW_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "WSC-MARKER-CHESTNUT" in joined, f"web_search_call query silently dropped; got {joined!r}"
+assert "wsc-page" in joined, f"web_search_call open_page url silently dropped; got {joined!r}"
+print("web_search_call fold-to-text PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# V (Class A): unknown response_item or event_msg payload type emits a
+# stderr warning so future Codex schema additions are surfaced rather than
+# silently dropped. Documented drops (reasoning, token_count, agent_message
+# duplicate, etc.) MUST NOT trigger the warning — only genuinely unknown
+# types. This makes the dispatch a known-list contract instead of an
+# implicit allowlist with a silent default.
+# ---------------------------------------------------------------------------
+TV_UUID="00000000-0000-7000-8000-00000000002e"
+TV_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-15-00-$TV_UUID.jsonl"
+cat > "$TV_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TV_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"newly_invented_codex_type_zzz","detail":"future schema"}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"event_msg","payload":{"type":"reasoning","summary":"intentional drop"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"event_msg","payload":{"type":"token_count","input_tokens":10}}
+EOF
+
+OUT="$SANDBOX/unk.stdout"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TV_UUID" >"$OUT" 2>"$SANDBOX/unk.stderr"
+grep -q "newly_invented_codex_type_zzz" "$SANDBOX/unk.stderr" || {
+  echo "FAIL: unknown response_item type was silently dropped (no stderr warning)"
+  cat "$SANDBOX/unk.stderr"
+  exit 1; }
+# Documented drops MUST NOT warn — token_count is intentional.
+if grep -qi "token_count" "$SANDBOX/unk.stderr"; then
+  echo "FAIL: documented-drop type 'token_count' triggered noisy warning"
+  cat "$SANDBOX/unk.stderr"
+  exit 1
+fi
+echo "unknown-record-type warning PASSED (documented drops stay quiet)"
+
+# ---------------------------------------------------------------------------
+# W (Class A): agent_message is dropped on cross-vendor — empirical corpus
+# scan (60 rollouts, 6164 agent_message records, 2026-05-04 local data):
+# 5798/6164 (94%) agent_message text is duplicated in a neighboring
+# response_item.message; the remaining 6% are intermediate streaming status
+# pings the source model emitted during a turn but never published. Adding
+# a handler would duplicate content for the 94% case; dropping is correct.
+# This test pins the behavior so a future maintainer doesn't add a handler
+# thinking it's missing.
+# ---------------------------------------------------------------------------
+TW_UUID="00000000-0000-7000-8000-00000000002f"
+TW_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-16-00-$TW_UUID.jsonl"
+cat > "$TW_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TW_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"hi","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"agent_message","message":"AM-MARKER-INTERMEDIATE"}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"AM-MARKER-FINAL"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"AM-MARKER-FINAL"}],"phase":"commentary"}}
+EOF
+
+OUT="$SANDBOX/am.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TW_UUID" >"$OUT" 2>"$SANDBOX/am.stderr"
+TW_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TW_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TW_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TW_NEW_PATH") if l.strip()]
+texts = [b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict)]
+final_count = sum(1 for t in texts if "AM-MARKER-FINAL" in t)
+inter_count = sum(1 for t in texts if "AM-MARKER-INTERMEDIATE" in t)
+assert final_count == 1, f"final assistant content lost or duplicated: {final_count}; texts={texts}"
+assert inter_count == 0, f"intermediate agent_message leaked into output: {inter_count}; texts={texts}"
+print("agent_message intentional-drop PASSED (no duplication, final content preserved)")
+EOF
+# agent_message is documented; must not warn.
+if grep -qi "agent_message" "$SANDBOX/am.stderr"; then
+  echo "FAIL: documented-drop type 'agent_message' triggered noisy warning"
+  cat "$SANDBOX/am.stderr"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# X (Class B): invalid UTF-8 bytes in source must produce a stderr warning
+# and conversion proceeds; the converter must not crash with an unhandled
+# UnicodeDecodeError. Pre-fix the open(encoding="utf-8") call would raise
+# uncaught when the file contained any non-UTF-8 byte.
+# ---------------------------------------------------------------------------
+TX_UUID="00000000-0000-7000-8000-000000000030"
+TX_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-17-00-$TX_UUID.jsonl"
+TX_PATH="$TX_PATH" TX_UUID="$TX_UUID" CWD="$CWD" python3 - <<'PYEOF'
+import json
+import os
+path = os.environ["TX_PATH"]
+uid = os.environ["TX_UUID"]
+cwd = os.environ["CWD"]
+recs = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uid,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}},
+    {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"X-VALID-MARKER-LIME","images":[],"local_images":[],"text_elements":[]}},
+]
+with open(path, "wb") as f:
+    for r in recs:
+        f.write(json.dumps(r).encode("utf-8"))
+        f.write(b"\n")
+    f.write(b"\xff\xfe\x80garbage-bytes-here\xc3\x28\n")
+PYEOF
+
+OUT="$SANDBOX/utf8-bad.stdout"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TX_UUID" >"$OUT" 2>"$SANDBOX/utf8-bad.stderr" || {
+    echo "FAIL: converter crashed on invalid UTF-8 bytes"
+    cat "$SANDBOX/utf8-bad.stderr"
+    exit 1
+  }
+TX_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TX_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TX_NEW_UUID.jsonl"
+grep -q "X-VALID-MARKER-LIME" "$TX_NEW_PATH" || {
+  echo "FAIL: valid line lost when source has bad UTF-8 bytes"; exit 1; }
+echo "invalid-UTF-8 source warn-and-skip PASSED"
+
+# ---------------------------------------------------------------------------
+# Y (Class E): SIGTERM handler is installed and promotes SIGTERM to
+# SystemExit, so write_jsonl's BaseException cleanup runs and the .tmp file
+# is unlinked. Default SIGTERM handling on POSIX terminates without raising,
+# which would leave stale .tmp residue.
+# ---------------------------------------------------------------------------
+python3 - <<EOF
+import os, signal, sys
+sys.path.insert(0, "$REPO_ROOT/lib")
+import session_convert as sc
+sc._install_sigterm_handler()
+handler = signal.getsignal(signal.SIGTERM)
+assert callable(handler) and handler != signal.SIG_DFL, "SIGTERM handler not installed"
+try:
+    os.kill(os.getpid(), signal.SIGTERM)
+    raise AssertionError("SIGTERM did not raise SystemExit")
+except SystemExit as exc:
+    assert exc.code == 143, f"unexpected SystemExit code: {exc.code}"
+print("SIGTERM handler installs and promotes to SystemExit PASSED")
+EOF
+
+# Atomic-write cleanup runs on a mid-write exception (proxy for SIGTERM
+# now that it raises SystemExit, which is a BaseException).
+python3 - <<EOF
+import json, sys, tempfile
+sys.path.insert(0, "$REPO_ROOT/lib")
+import session_convert as sc
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as td:
+    target = Path(td) / "out.jsonl"
+    orig_dumps = json.dumps
+    calls = {"n": 0}
+    def boom(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("simulated mid-write failure")
+        return orig_dumps(*a, **kw)
+    json.dumps = boom
+    try:
+        try:
+            sc.write_jsonl(target, [{"a": 1}, {"a": 2}, {"a": 3}])
+        except RuntimeError:
+            pass
+    finally:
+        json.dumps = orig_dumps
+    assert not target.exists(), f"final file should not exist after failed write: {target}"
+    tmp = target.with_name(target.name + ".tmp")
+    assert not tmp.exists(), f"tmp file leaked after failed write: {tmp}"
+print("atomic-write cleanup on mid-write exception PASSED")
+EOF
+
 echo "all converter sandbox tests passed"
