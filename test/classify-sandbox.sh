@@ -104,6 +104,8 @@ assert_blocked unknown-chain-auth-flag --unk1 v1 unk2 something --auth-token=x
 assert_blocked unknown-chain-update --unk1 v1 unk2 update
 assert_blocked exec-flag-login exec --login=foo prompt
 assert_blocked exec-flag-auth-token exec --auth-token=xyz hi
+assert_blocked exec-alias-flag-login e --login=foo prompt
+assert_blocked exec-alias-flag-auth-token e --auth-token=xyz hi
 assert_blocked resume-flag-login resume --login=foo 00000000-0000-7000-8000-000000000099
 assert_blocked chat-flag-auth-token chat --auth-token=h say hi
 assert_blocked login-status-auth-token login status --auth-token=abc
@@ -121,6 +123,8 @@ assert_second exec-login-prompt exec please write a login form
 assert_second exec-auth-token-prompt exec rotate the auth token
 assert_second exec-mcp-prompt exec how does mcp work
 assert_second exec-update-prompt exec update the changelog
+assert_second exec-alias-login-prompt e please write a login form
+assert_second exec-alias-auth-token-prompt e rotate the auth token
 assert_second bare-update-prompt help me update the plugin config
 assert_second max-tokens-flag --max-tokens=500 exec hi
 assert_second token-budget-flag --token-budget=100 chat
@@ -135,6 +139,7 @@ assert_second top-level-separator-auth-token -- --auth-token=secret
 assert_second top-level-separator-flag-prompt -- --login please login
 assert_second top-level-separator-auth-prompt -- --auth-token=secret please mcp oauth
 assert_second exec-separator-flag exec -- --login
+assert_second exec-alias-separator-flag e -- --login
 assert_second chat-separator-flag chat -- --auth-token=secret
 assert_second resume-separator-flag resume -- --login=foo 00000000-0000-7000-8000-000000000099
 assert_second oss-prompt --oss write mcp docs

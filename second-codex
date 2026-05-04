@@ -316,7 +316,7 @@ classify_known_command() {
   local has_status=0 has_setup=0 token
 
   case "$command" in
-    exec|resume|chat)
+    exec|e|resume|chat)
       local after_separator=0
       for token in "$@"; do
         if (( after_separator )); then
@@ -393,7 +393,7 @@ classify_command() {
         fi
         ;;
       *)
-        if token_is_auth_mutation "$arg" || token_is_setup_command "$arg" || token_is_runtime_mutation "$arg" || [[ "$arg" == exec || "$arg" == resume || "$arg" == chat ]]; then
+        if token_is_auth_mutation "$arg" || token_is_setup_command "$arg" || token_is_runtime_mutation "$arg" || [[ "$arg" == exec || "$arg" == e || "$arg" == resume || "$arg" == chat ]]; then
           classify_known_command "$arg" "${args[@]:$((i + 1))}"
           return
         fi
