@@ -111,12 +111,13 @@ codex resume <new_uuid>
 second-codex handoff-from-claude <id> --codex-approval-policy never --codex-sandbox-policy danger-full-access
 ```
 
-What is preserved: text turns, tool calls and results (with linkage for the mapped pair), `cwd` context, source per-record timestamps.
+What is preserved: text turns, tool calls and results (with linkage for the mapped pair), `cwd` context, source per-record timestamps. Image attachments do not round-trip as binary content; they become explicit omission markers. On Codex → Claude handoff, `response_item.message` is role-dispatched: assistant `output_text` and user `input_text` blocks are preserved, and duplicate `event_msg.user_message` echoes are suppressed so user prompts do not appear twice.
 
 What is dropped on cross-vendor:
 
 - Reasoning / thinking blocks — vendor-issued cryptographic signatures (`signature`, `encrypted_content`) cannot round-trip. Dropping them is the safe-by-construction policy: the converted session resumes successfully without them (verified by `test/e2e-resume-probe.sh`). The earlier "including them causes the receiving API to reject the turn" framing was an X-causes-Y claim observed only with X-present, never with an X-absent control, and has been withdrawn — the underlying causal mechanism remains unconfirmed.
 - Claude `attachment` (hook telemetry) and `file-history-snapshot` records — the load-bearing content is already in the corresponding `tool_result` blocks.
+- Codex `response_item.message` with role `developer` — these records carry source-process runtime policy and environment context (permissions, sandbox, injected project instructions). Replaying them as Claude user text would import stale source-runtime constraints into a different receiver runtime.
 - Codex `agent_message` events — full-corpus scan (468 rollouts / 19,619 records) shows ~88% are duplicates of a neighboring `response_item.message` (final assistant turn) and ~12% are intermediate streaming status pings the source model emitted but never published. Adding a handler would duplicate assistant content for the bulk case.
 - Codex `agent_reasoning` events — these carry plain-text reasoning and are dropped on the same cross-vendor boundary as the encrypted reasoning blocks above; reasoning content does not survive cross-vendor handoff.
 - Other Codex `event_msg` metadata: `token_count`, `exec_command_end`, `patch_apply_end`, `mcp_tool_call_end`, `guardian_assessment`, `collab_*`, `web_search_end`, `context_compacted`, `thread_name_updated`, `error`, `dynamic_tool_call_request`, `dynamic_tool_call_response` (shadowed by matching `function_call_output`), `thread_rolled_back`, `item_completed`.

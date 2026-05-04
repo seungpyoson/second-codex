@@ -16,6 +16,12 @@ with the target tool's native command.
 Conversion semantics:
 
 - Text turns translate role-for-role (user / assistant).
+- Codex `response_item.message` is role-dispatched: assistant `output_text`
+  and user `input_text` blocks are load-bearing conversation turns.
+  Adjacent `event_msg.user_message` records are compatibility echoes of the
+  same user text and are suppressed to avoid duplicate prompts. Developer
+  role messages carry runtime policy/environment context from the source
+  process and are intentionally not portable across vendors.
 - Tool calls round-trip structurally only when both sides recognize the
   tool; the cross-vendor mapping is deliberately narrow (Bash <->
   exec_command). Unmapped tools (including Codex `custom_tool_call`,
@@ -82,6 +88,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +151,13 @@ _CODEX_RESPONSE_ITEM_HANDLED: frozenset[str] = frozenset({
 })
 _CODEX_RESPONSE_ITEM_DOCUMENTED_DROP: frozenset[str] = frozenset({
     "reasoning",
+})
+_CODEX_RESPONSE_MESSAGE_ROLE_DOCUMENTED_DROP: frozenset[str] = frozenset({
+    # Codex uses response_item.message(role=developer) for runtime policy and
+    # environment context (permissions, sandbox, AGENTS.md injection). Replaying
+    # it as Claude user text would import stale source-process constraints into
+    # a different runtime, so this role is a documented cross-vendor boundary.
+    "developer",
 })
 _CODEX_EVENT_MSG_HANDLED: frozenset[str] = frozenset({
     "user_message", "task_started", "task_complete", "turn_aborted",
@@ -566,6 +580,32 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
     unknown_call_ids: set[str] = set()
     custom_tool_call_ids: set[str] = set()
     warned_unknowns: set[str] = set()
+    def codex_message_blocks(payload_obj: dict[str, Any], string_block_type: str) -> list[Any]:
+        content = payload_obj.get("content", [])
+        if isinstance(content, str):
+            return [{"type": string_block_type, "text": content}]
+        if isinstance(content, list):
+            return content
+        return []
+
+    def codex_user_text_echo(payload_obj: dict[str, Any]) -> str:
+        parts = []
+        for block_obj in codex_message_blocks(payload_obj, "input_text"):
+            if isinstance(block_obj, dict) and block_obj.get("type") == "input_text":
+                text = block_obj.get("text") or ""
+                if text:
+                    parts.append(text)
+        return "".join(parts)
+
+    response_item_user_echoes = Counter(
+        text for rec in records
+        if rec.get("type") == "response_item"
+        and isinstance(rec.get("payload"), dict)
+        and rec["payload"].get("type") == "message"
+        and rec["payload"].get("role") == "user"
+        for text in [codex_user_text_echo(rec["payload"])]
+        if text
+    )
     # Tracks the source record's timestamp for the current loop iteration so
     # converted records inherit it (preserving session ordering across the
     # handoff). Falls back to now_iso() when the source record has none.
@@ -602,6 +642,9 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 text = payload.get("message", "")
                 if not text:
                     continue
+                if response_item_user_echoes[text] > 0:
+                    response_item_user_echoes[text] -= 1
+                    continue
                 out.append(make_record(
                     "user",
                     {"role": "user", "content": [{"type": "text", "text": text}]},
@@ -630,7 +673,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         ptype = payload.get("type")
         if ptype == "message" and payload.get("role") == "assistant":
             content_blocks = []
-            for block in payload.get("content", []) or []:
+            for block in codex_message_blocks(payload, "output_text"):
                 if not isinstance(block, dict):
                     continue
                 btype = block.get("type")
@@ -652,6 +695,32 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 },
                 extras={"requestId": f"req_xfmt_{secrets.token_hex(8)}"},
             ))
+        elif ptype == "message" and payload.get("role") == "user":
+            content_blocks = []
+            for block in codex_message_blocks(payload, "input_text"):
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                text = block.get("text") or ""
+                if btype == "input_text" and text:
+                    content_blocks.append({"type": "text", "text": text})
+                elif btype == "input_image":
+                    content_blocks.append({
+                        "type": "text",
+                        "text": "[Codex user image attachment omitted during cross-vendor handoff]",
+                    })
+            if not content_blocks:
+                continue
+            out.append(make_record(
+                "user",
+                {"role": "user", "content": content_blocks},
+            ))
+        elif ptype == "message" and payload.get("role") in _CODEX_RESPONSE_MESSAGE_ROLE_DOCUMENTED_DROP:
+            continue
+        elif ptype == "message":
+            role = payload.get("role")
+            if isinstance(role, str):
+                _warn_unknown("response_item.message.role", role, warned_unknowns)
         elif ptype == "function_call":
             call_id = payload.get("call_id", "")
             tool_name_codex = payload.get("name", "")
@@ -998,11 +1067,13 @@ def claude_to_codex(
                 btype = block.get("type")
                 if btype == "text":
                     text_parts.append(block.get("text") or "")
+                elif btype == "image":
+                    text_parts.append("[Claude user image attachment omitted during cross-vendor handoff]")
                 elif btype == "tool_result":
                     tool_results.append(block)
             if text_parts:
                 joined = "\n".join(p for p in text_parts if p)
-                if joined.strip():
+                if joined:
                     out.append({
                         "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                         "type": "event_msg",

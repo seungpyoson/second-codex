@@ -844,6 +844,79 @@ print("web_search_call fold-to-text PASSED")
 EOF
 
 # ---------------------------------------------------------------------------
+# V (Issue #10): response_item.message is role-dispatched, not a single
+# assistant-only shape. Assistant messages are already preserved above; user
+# messages are the canonical prompt body in modern Codex rollouts, while the
+# adjacent event_msg.user_message is a duplicate compatibility echo. Developer
+# messages are runtime policy/environment context and are intentionally not
+# portable across vendors, but they must be a documented quiet drop rather than
+# an "unknown message" warning.
+# ---------------------------------------------------------------------------
+TV_UUID="00000000-0000-7000-8000-00000000002e"
+TV_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-15-00-$TV_UUID.jsonl"
+cat > "$TV_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TV_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"DEV-RUNTIME-CONTEXT-DO-NOT-PORT"},{"type":"input_image","image_url":"data:image/png;base64,BBBB"}]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"UNIQUE-USER-MARKER-LIME"}]}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"DUPLICATE-USER-MARKER-PEAR"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"DUPLICATE-USER-MARKER-PEAR","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ASSISTANT-MARKER-PLUM"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:07.000Z","type":"event_msg","payload":{"type":"user_message","message":"REVERSE-USER-MARKER-MANGO","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:08.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"REVERSE-USER-MARKER-MANGO"}]}}
+{"timestamp":"2026-05-04T00:00:09.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"INTERVENING-USER-MARKER-GRAPE"}]}}
+{"timestamp":"2026-05-04T00:00:10.000Z","type":"event_msg","payload":{"type":"token_count","input_tokens":10}}
+{"timestamp":"2026-05-04T00:00:11.000Z","type":"event_msg","payload":{"type":"user_message","message":"INTERVENING-USER-MARKER-GRAPE","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:12.000Z","type":"response_item","payload":{"type":"message","role":"user","content":"STRING-USER-MARKER-FIG"}}
+{"timestamp":"2026-05-04T00:00:13.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":"STRING-ASSISTANT-MARKER-KIWI","phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:14.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"MULTI-"},{"type":"input_text","text":"BLOCK-USER-MARKER-APRICOT"}]}}
+{"timestamp":"2026-05-04T00:00:15.000Z","type":"event_msg","payload":{"type":"user_message","message":"MULTI-BLOCK-USER-MARKER-APRICOT","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:16.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,CCCC"}]}}
+{"timestamp":"2026-05-04T00:00:17.000Z","type":"response_item","payload":{"type":"message","role":"orchestrator","content":[{"type":"input_text","text":"UNKNOWN-ROLE-MARKER-DO-NOT-PORT"}]}}
+EOF
+
+OUT="$SANDBOX/response-item-message.stdout"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TV_UUID" >"$OUT" 2>"$SANDBOX/response-item-message.stderr"
+TV_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TV_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TV_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TV_NEW_PATH") if l.strip()]
+texts = [b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict)]
+joined = "\n".join(texts)
+assert "UNIQUE-USER-MARKER-LIME" in joined, f"unique response_item user message was lost: {texts}"
+assert sum(1 for t in texts if "DUPLICATE-USER-MARKER-PEAR" in t) == 1, f"duplicate user message was not de-duplicated: {texts}"
+assert sum(1 for t in texts if "REVERSE-USER-MARKER-MANGO" in t) == 1, f"reverse-ordered duplicate user message leaked: {texts}"
+assert sum(1 for t in texts if "INTERVENING-USER-MARKER-GRAPE" in t) == 1, f"intervening-record duplicate user message leaked: {texts}"
+assert sum(1 for t in texts if "MULTI-" in t or "BLOCK-USER-MARKER-APRICOT" in t) == 2, f"multi-block user message was lost or collapsed unexpectedly: {texts}"
+assert sum(1 for t in texts if "image attachment omitted" in t) == 2, f"image omission marker missing or duplicated: {texts}"
+assert "ASSISTANT-MARKER-PLUM" in joined, f"assistant response_item.message was lost: {texts}"
+assert "STRING-USER-MARKER-FIG" in joined, f"string-form response_item user message was lost: {texts}"
+assert "STRING-ASSISTANT-MARKER-KIWI" in joined, f"string-form response_item assistant message was lost: {texts}"
+assert "DEV-RUNTIME-CONTEXT-DO-NOT-PORT" not in joined, f"developer runtime context leaked into target session: {texts}"
+assert "UNKNOWN-ROLE-MARKER-DO-NOT-PORT" not in joined, f"unknown role leaked into target session: {texts}"
+print("response_item.message role dispatch PASSED")
+EOF
+
+if grep -q "unhandled response_item.payload type 'message'" "$SANDBOX/response-item-message.stderr"; then
+  echo "FAIL: known response_item.message role shape still warns as unknown"
+  cat "$SANDBOX/response-item-message.stderr"
+  exit 1
+fi
+if grep -q "response_item.message.role type 'developer'" "$SANDBOX/response-item-message.stderr"; then
+  echo "FAIL: documented developer message role triggered noisy warning"
+  cat "$SANDBOX/response-item-message.stderr"
+  exit 1
+fi
+grep -q "response_item.message.role type 'orchestrator'" "$SANDBOX/response-item-message.stderr" || {
+  echo "FAIL: unknown response_item.message role did not warn"
+  cat "$SANDBOX/response-item-message.stderr"
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
 # V (Class A): unknown response_item or event_msg payload type emits a
 # stderr warning so future Codex schema additions are surfaced rather than
 # silently dropped. Documented drops (reasoning, token_count, agent_message
@@ -851,8 +924,8 @@ EOF
 # types. This makes the dispatch a known-list contract instead of an
 # implicit allowlist with a silent default.
 # ---------------------------------------------------------------------------
-TV_UUID="00000000-0000-7000-8000-00000000002e"
-TV_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-15-00-$TV_UUID.jsonl"
+TV_UUID="00000000-0000-7000-8000-00000000003e"
+TV_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-15-01-$TV_UUID.jsonl"
 cat > "$TV_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TV_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
 {"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
@@ -1176,9 +1249,10 @@ EOF
 # (~17% of real local user records, 2026-05-04 corpus scan) must survive
 # claude-to-codex conversion. Pre-fix: the input loop's
 # `if not isinstance(content, list): continue` silently dropped these, losing
-# user prompts in any session that mixed string-form and list-form turns.
-# Fix normalizes a string content to a single text block before the
-# isinstance check.
+# user prompts in any session that mixed string-form and list-form turns. The
+# list-form path must also render Claude image blocks as explicit omission
+# markers, matching the Codex -> Claude image boundary instead of dropping
+# them silently.
 # ---------------------------------------------------------------------------
 EE_SRC_UUID="00000000-0000-4000-8000-deadbeef00ee"
 EE_SRC="$CLAUDE_HOME/projects/$ENCODED_CWD/$EE_SRC_UUID.jsonl"
@@ -1189,7 +1263,11 @@ records = [
     {"type":"user","uuid":"u1","parentUuid":None,"sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":False,
      "message":{"role":"user","content":"STRING-FORM-USER-PROMPT-CARDAMOM"}},
     {"type":"user","uuid":"u2","parentUuid":"u1","sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:01.000Z","isSidechain":False,
-     "message":{"role":"user","content":[{"type":"text","text":"LIST-FORM-USER-PROMPT-VANILLA"}]}},
+     "message":{"role":"user","content":[{"type":"text","text":"LIST-FORM-USER-PROMPT-VANILLA"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}},
+    {"type":"user","uuid":"u3","parentUuid":"u2","sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:02.000Z","isSidechain":False,
+     "message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"BBBB"}}]}},
+    {"type":"user","uuid":"u4","parentUuid":"u3","sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:03.000Z","isSidechain":False,
+     "message":{"role":"user","content":"   "}},
 ]
 with open(src,"w",encoding="utf-8") as f:
     for r in records: f.write(json.dumps(r)+"\n")
@@ -1208,6 +1286,10 @@ assert "STRING-FORM-USER-PROMPT-CARDAMOM" in joined, \
     f"string-content user record was DROPPED; got {joined!r}"
 assert "LIST-FORM-USER-PROMPT-VANILLA" in joined, \
     f"list-content user record regression; got {joined!r}"
+assert joined.count("Claude user image attachment omitted") == 2, \
+    f"Claude image block was silently dropped; got {joined!r}"
+assert any(msg == "   " for msg in user_msgs), \
+    f"whitespace-only Claude user prompt was dropped; got {user_msgs!r}"
 print("string-content Claude user records survive claude-to-codex PASSED")
 EOF
 
