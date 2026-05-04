@@ -413,6 +413,13 @@ classify_known_command() {
 }
 
 classify_command() {
+  # Bash 3.2 (macOS /bin/bash) errors on `local args=("$@")` when $# == 0
+  # because nounset flags the implicit unset-array assignment. Guard explicitly
+  # so the no-args fall-through (`echo second`) still applies cleanly.
+  if (( $# == 0 )); then
+    echo second
+    return
+  fi
   local args=("$@")
   local i=0 saw_ambiguous_option=0 scan_after_ambiguous_option=0 arg
   for arg in "${args[@]}"; do
@@ -1004,6 +1011,10 @@ EOF
 }
 
 find_session_id_after_resume_command() {
+  # Same bash 3.2 nounset guard as classify_command — fall-through is `return 1`.
+  if (( $# == 0 )); then
+    return 1
+  fi
   local args=("$@")
   local i=0 saw_ambiguous_option=0 arg
   while (( i < ${#args[@]} )); do
@@ -1050,6 +1061,10 @@ find_session_id_after_resume_command() {
 }
 
 find_resume_session_arg() {
+  # Same bash 3.2 nounset guard as classify_command — fall-through is `return 1`.
+  if (( $# == 0 )); then
+    return 1
+  fi
   local args=("$@")
   local i=0 saw_ambiguous_option=0 arg
   while (( i < ${#args[@]} )); do

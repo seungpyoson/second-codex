@@ -186,4 +186,25 @@ assert_blocked plugin-auth plugin auth
 assert_blocked skill-login skill login
 assert_blocked app-oauth app oauth
 
+# Regression guard: empty-args wrapper invocation must not crash under
+# bash 3.2 nounset (`local args=("$@")` triggers "args[@]: unbound variable"
+# on macOS system bash when `$@` has zero elements).
+: > "$SANDBOX/codex.log"
+empty_args_out="$SANDBOX/empty-args.out"
+set +e
+run_wrapper >"$empty_args_out" 2>&1
+empty_args_rc=$?
+set -e
+if grep -q "unbound variable" "$empty_args_out"; then
+  echo "FAIL second-codex (no args) errored with unbound variable" >&2
+  cat "$empty_args_out" >&2
+  exit 1
+fi
+if (( empty_args_rc != 0 )); then
+  echo "FAIL second-codex (no args) exited $empty_args_rc" >&2
+  cat "$empty_args_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=$" "$SANDBOX/codex.log"
+
 echo "PASS classify sandbox"
