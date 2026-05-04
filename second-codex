@@ -849,6 +849,7 @@ preflight_second_resume() {
 
 handoff_session() {
   local requested="--last"
+  local explicit_last=0
   local cwd_filter=""
   while (( $# > 0 )); do
     case "$1" in
@@ -865,6 +866,7 @@ handoff_session() {
           echo "second-codex handoff: cannot combine an explicit session id with --last" >&2
           return 64
         fi
+        explicit_last=1
         requested="--last"
         shift
         ;;
@@ -873,8 +875,12 @@ handoff_session() {
         return 64
         ;;
       *)
-        if [[ "$requested" != "--last" ]]; then
-          echo "usage: second-codex handoff [SESSION_ID|--last] [--cwd PATH]" >&2
+        if [[ "$requested" != "--last" || "$explicit_last" == "1" ]]; then
+          if [[ "$explicit_last" == "1" ]]; then
+            echo "second-codex handoff: cannot combine an explicit session id with --last" >&2
+          else
+            echo "usage: second-codex handoff [SESSION_ID|--last] [--cwd PATH]" >&2
+          fi
           return 64
         fi
         requested="$1"

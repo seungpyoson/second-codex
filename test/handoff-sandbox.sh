@@ -116,6 +116,16 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" handoff --last "$OTHER_SESSION_ID" >"$SANDBOX/last-plus-id.out" 2>&1; then
+  echo "FAIL handoff allowed --last with explicit session id"
+  exit 1
+fi
+grep -q "cannot combine an explicit session id with --last" "$SANDBOX/last-plus-id.out"
+
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
   "$REPO_ROOT/second-codex" handoff "../../bad" >"$SANDBOX/bad-id.out" 2>&1; then
   echo "FAIL malformed handoff session id was not refused"
   exit 1
