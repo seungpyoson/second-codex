@@ -1600,4 +1600,227 @@ print("unknown-type dedupe scales to many distinct kinds PASSED")
 EOF
 
 
+
+# ---------------------------------------------------------------------------
+# LL (issue #6 sub-bullet 1, Greptile P2): orphan function_call_output
+# (a Codex response_item.function_call_output whose call_id has no
+# matching response_item.function_call) must fold to an `[Orphan tool
+# result: ...]` user text record, parity with the custom_tool_call_output
+# orphan branch and the README's explicit "broken linkage" contract.
+# Pre-#6 the converter emitted bare `str(output)` with no wrapper, which
+# surfaced as an unexplained user message to the receiving Claude model.
+# ---------------------------------------------------------------------------
+LL_SRC_UUID="019dee99-1006-7000-8000-deadbeef0066"
+LL_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${LL_SRC_UUID}.jsonl"
+python3 - "$LL_SRC" "$LL_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+    # Orphan output: a function_call_output with a call_id that has no
+    # matching function_call upstream. The previous converter produced
+    # bare `str(output)`; #6 changes this to `[Orphan tool result: ...]`.
+    {"timestamp":"2026-05-04T00:00:01.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_orphan_LL","output":"LL-ORPHAN-OUTPUT-PAYLOAD"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+LL_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$LL_SRC_UUID")
+LL_NEW_UUID=$(echo "$LL_OUT" | awk '/^new session UUID:/ {print $NF}')
+LL_NEW_PATH=$(echo "$LL_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$LL_NEW_PATH" <<'EOF'
+import json, sys
+joined = []
+for line in open(sys.argv[1]):
+    if not line.strip(): continue
+    r = json.loads(line)
+    if r.get("type") != "user": continue
+    msg = r.get("message", {})
+    for b in msg.get("content", []) if isinstance(msg.get("content"), list) else []:
+        if isinstance(b, dict) and b.get("type") == "text":
+            joined.append(b.get("text", ""))
+all_text = "\n".join(joined)
+assert "[Orphan tool result: LL-ORPHAN-OUTPUT-PAYLOAD]" in all_text, \
+    f"orphan FCO not wrapped in [Orphan tool result: ...]: {all_text!r}"
+# Also assert the bare-text form is NOT present (regression of pre-#6 shape).
+assert all_text.count("LL-ORPHAN-OUTPUT-PAYLOAD") == 1, \
+    f"orphan output should appear exactly once, wrapped: {all_text!r}"
+# And confirm the wrapped chunk doesn't double-wrap.
+import re
+unwrapped = re.findall(r"^LL-ORPHAN-OUTPUT-PAYLOAD$", all_text, flags=re.MULTILINE)
+assert not unwrapped, f"orphan output leaked unwrapped: {unwrapped!r}"
+print("orphan function_call_output wrapped as [Orphan tool result: ...] PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# MM (issue #6 sub-bullet 2a/2b, Greptile P2 + empirical schema fix):
+# default claude_to_codex without policy flags must emit:
+#   approval_policy = "on-request"   (was hardcoded "never")
+#   sandbox_policy  = {"type": "read-only"}  (was {"mode": "read-only"} —
+#                       Codex's tagged-union discriminator is `type`, not
+#                       `mode`, per empirical scan of 4870 local rollouts)
+# ---------------------------------------------------------------------------
+MM_SRC_UUID="00000000-0000-4000-8000-deadbeef0077"
+MM_SRC="$CLAUDE_HOME/projects/$ENCODED_CWD/$MM_SRC_UUID.jsonl"
+python3 - "$MM_SRC" "$MM_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"type":"user","uuid":"u1","parentUuid":None,"sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":False,
+     "message":{"role":"user","content":"hi"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+MM_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$MM_SRC_UUID")
+MM_NEW_UUID=$(echo "$MM_OUT" | awk '/^new session UUID:/ {print $NF}')
+MM_NEW_PATH=$(echo "$MM_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$MM_NEW_PATH" <<'EOF'
+import json, sys
+turn_context = None
+for line in open(sys.argv[1]):
+    if not line.strip(): continue
+    r = json.loads(line)
+    if r.get("type") == "turn_context":
+        turn_context = r.get("payload", {})
+        break
+assert turn_context is not None, "no turn_context emitted"
+assert turn_context.get("approval_policy") == "on-request", \
+    f"default approval_policy should be on-request, got {turn_context.get('approval_policy')!r}"
+sp = turn_context.get("sandbox_policy")
+assert isinstance(sp, dict), f"sandbox_policy not dict: {sp!r}"
+assert sp.get("type") == "read-only", \
+    f"default sandbox_policy.type should be read-only, got {sp.get('type')!r}"
+assert "mode" not in sp, \
+    f"sandbox_policy must not use legacy 'mode' key (Codex uses 'type'): {sp!r}"
+print("default approval_policy + correct sandbox_policy schema PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# NN (issue #6 sub-bullet 2c): each valid CLI enum value round-trips into
+# turn_context. Iterates over every value of both flags.
+# ---------------------------------------------------------------------------
+NN_SRC_UUID="00000000-0000-4000-8000-deadbeef0088"
+NN_SRC="$CLAUDE_HOME/projects/$ENCODED_CWD/$NN_SRC_UUID.jsonl"
+python3 - "$NN_SRC" "$NN_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"type":"user","uuid":"u1","parentUuid":None,"sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":False,
+     "message":{"role":"user","content":"hi"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+for ap in untrusted on-request on-failure never; do
+  for sp in read-only workspace-write danger-full-access; do
+    NN_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+        python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$NN_SRC_UUID" \
+        --codex-approval-policy "$ap" --codex-sandbox-policy "$sp")
+    NN_PATH=$(echo "$NN_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+    python3 - "$NN_PATH" "$ap" "$sp" <<'EOF'
+import json, sys
+fp, ap_expected, sp_expected = sys.argv[1], sys.argv[2], sys.argv[3]
+turn_context = None
+for line in open(fp):
+    if not line.strip(): continue
+    r = json.loads(line)
+    if r.get("type") == "turn_context":
+        turn_context = r.get("payload", {})
+        break
+assert turn_context, "no turn_context"
+assert turn_context.get("approval_policy") == ap_expected, \
+    f"approval_policy round-trip failed: expected {ap_expected!r} got {turn_context.get('approval_policy')!r}"
+sp_dict = turn_context.get("sandbox_policy", {})
+assert sp_dict.get("type") == sp_expected, \
+    f"sandbox_policy.type round-trip failed: expected {sp_expected!r} got {sp_dict.get('type')!r}"
+EOF
+  done
+done
+echo "approval_policy + sandbox_policy CLI flags round-trip across full enum PASSED"
+
+# ---------------------------------------------------------------------------
+# OO (issue #6 sub-bullet 2d/2e): workspace-write must include the four
+# sub-fields with conservative defaults; invalid enum values must be
+# rejected by Python argparse with exit 2 and a clear error.
+# ---------------------------------------------------------------------------
+OO_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$NN_SRC_UUID" \
+    --codex-sandbox-policy workspace-write)
+OO_PATH=$(echo "$OO_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$OO_PATH" "$CWD" <<'EOF'
+import json, sys, os
+fp, expected_cwd = sys.argv[1], sys.argv[2]
+turn_context = None
+for line in open(fp):
+    if not line.strip(): continue
+    r = json.loads(line)
+    if r.get("type") == "turn_context":
+        turn_context = r.get("payload", {})
+        break
+assert turn_context, "no turn_context"
+sp = turn_context.get("sandbox_policy", {})
+assert sp.get("type") == "workspace-write", f"type wrong: {sp!r}"
+# Conservative defaults: cwd as the only writable root, no network, no
+# tmp exclusions. Realpath because converter realpaths the cwd.
+assert sp.get("writable_roots") == [os.path.realpath(expected_cwd)], \
+    f"writable_roots default wrong: {sp.get('writable_roots')!r} (expected [{os.path.realpath(expected_cwd)!r}])"
+assert sp.get("network_access") is False, f"network_access default wrong: {sp.get('network_access')!r}"
+assert sp.get("exclude_tmpdir_env_var") is False, f"exclude_tmpdir_env_var wrong: {sp.get('exclude_tmpdir_env_var')!r}"
+assert sp.get("exclude_slash_tmp") is False, f"exclude_slash_tmp wrong: {sp.get('exclude_slash_tmp')!r}"
+print("workspace-write sub-fields populated with conservative defaults PASSED")
+EOF
+
+# Invalid enum values rejected at the Python boundary with exit 2.
+set +e
+OO_BAD_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$NN_SRC_UUID" \
+    --codex-approval-policy bogus 2>&1 >/dev/null)
+OO_BAD_RC=$?
+set -e
+case "$OO_BAD_OUT" in
+    *"argument --codex-approval-policy"*"invalid choice"*)
+        [ "$OO_BAD_RC" -ne 0 ] || { echo "FAIL: invalid --codex-approval-policy accepted (rc=0)"; exit 1; }
+        ;;
+    *)
+        echo "FAIL: expected argparse 'invalid choice' for --codex-approval-policy bogus, got rc=$OO_BAD_RC stderr=$OO_BAD_OUT"
+        exit 1
+        ;;
+esac
+set +e
+OO_BAD_SP=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$NN_SRC_UUID" \
+    --codex-sandbox-policy nonsense 2>&1 >/dev/null)
+OO_BAD_SP_RC=$?
+set -e
+case "$OO_BAD_SP" in
+    *"argument --codex-sandbox-policy"*"invalid choice"*)
+        [ "$OO_BAD_SP_RC" -ne 0 ] || { echo "FAIL: invalid --codex-sandbox-policy accepted (rc=0)"; exit 1; }
+        echo "invalid --codex-{approval,sandbox}-policy values rejected by argparse PASSED"
+        ;;
+    *)
+        echo "FAIL: expected argparse 'invalid choice' for --codex-sandbox-policy nonsense, got rc=$OO_BAD_SP_RC stderr=$OO_BAD_SP"
+        exit 1
+        ;;
+esac
+
+# Also assert the wrapper rejects --codex-approval-policy on the wrong
+# direction (handoff-to-claude).
+set +e
+OO_WRONG_DIR=$("$REPO_ROOT/second-codex" handoff-to-claude "$LL_SRC_UUID" --codex-approval-policy never 2>&1 >/dev/null)
+OO_WRONG_DIR_RC=$?
+set -e
+case "$OO_WRONG_DIR" in
+    *"only valid on handoff-from-claude"*)
+        [ "$OO_WRONG_DIR_RC" -ne 0 ] || { echo "FAIL: --codex-approval-policy accepted on handoff-to-claude (rc=0)"; exit 1; }
+        echo "wrapper rejects --codex-approval-policy on wrong direction PASSED"
+        ;;
+    *)
+        echo "FAIL: expected wrong-direction error for --codex-approval-policy on handoff-to-claude, got rc=$OO_WRONG_DIR_RC stderr=$OO_WRONG_DIR"
+        exit 1
+        ;;
+esac
+
 echo "all converter sandbox tests passed"

@@ -663,7 +663,6 @@ latest_session_id_for_home() {
   fi
   python3 - "$home" "$cwd_filter" <<'PY'
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -713,43 +712,50 @@ for line in reversed(lines):
     recent_rank[session_id] = len(recent_rank)
 
 best = None
-session_id_pattern = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 
+# Iterate recent sessions in recency order (most recent first) and use a
+# *targeted* glob for each session id rather than `sessions.rglob("*.jsonl")`.
+# The pre-#6 implementation walked the entire `sessions/` tree on every
+# shell command — O(total sessions) per hint generation, noticeable lag
+# once sessions accumulate. The targeted approach is O(history-depth)
+# bounded by `recent_rank` (typically ≤500) regardless of total corpus
+# size, and stops at the first cwd match.
+#
+# Codex rollout layout: `sessions/YYYY/MM/DD/rollout-<TS>-<UUID>.jsonl`.
+# A `*/*/*/rollout-*-{session_id}.jsonl` glob is bounded to four path
+# segments and matches at most a handful of files in practice (typically
+# one).
 try:
-    for path in sessions.rglob("*.jsonl"):
-        filename_ids = [match.group(0) for match in session_id_pattern.finditer(path.name)]
-        if not filename_ids:
-            continue
-        candidate_ids = [session_id for session_id in filename_ids if session_id in recent_rank]
-        if not candidate_ids:
-            continue
-        try:
-            with path.open("r", encoding="utf-8", errors="replace") as fh:
-                for idx, line in enumerate(fh):
-                    if idx >= 25:
+    for session_id in sorted(recent_rank, key=recent_rank.get):
+        for path in sessions.glob(f"*/*/*/rollout-*-{session_id}.jsonl"):
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as fh:
+                    for idx, line in enumerate(fh):
+                        if idx >= 25:
+                            break
+                        try:
+                            item = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if item.get("type") != "session_meta":
+                            continue
+                        payload = item.get("payload") or {}
+                        if payload.get("cwd") != cwd or payload.get("id") != session_id:
+                            break
+                        best = session_id
                         break
-                    try:
-                        item = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if item.get("type") != "session_meta":
-                        continue
-                    payload = item.get("payload") or {}
-                    found_id = payload.get("id")
-                    if payload.get("cwd") != cwd or found_id not in recent_rank:
-                        break
-                    rank = recent_rank[found_id]
-                    if best is None or rank < best[0]:
-                        best = (rank, found_id)
-                    break
-        except OSError:
-            continue
+            except OSError:
+                continue
+            if best:
+                break
+        if best:
+            break
 except OSError as exc:
     print(f"second-codex could not scan Codex sessions: {exc}", file=sys.stderr)
     raise SystemExit(67)
 
 if best:
-    print(best[1])
+    print(best)
     raise SystemExit(0)
 
 print(f"second-codex could not find a recent session for cwd: {cwd}", file=sys.stderr)
@@ -1186,9 +1192,16 @@ run_session_converter() {
   local cmd_name="$2"
   shift 2
 
-  local usage="usage: second-codex $cmd_name <session-id> [--target-cwd PATH]"
+  local usage
+  if [[ "$direction" == "claude-to-codex" ]]; then
+    usage="usage: second-codex $cmd_name <session-id> [--target-cwd PATH] [--codex-approval-policy {untrusted|on-request|on-failure|never}] [--codex-sandbox-policy {read-only|workspace-write|danger-full-access}]"
+  else
+    usage="usage: second-codex $cmd_name <session-id> [--target-cwd PATH]"
+  fi
   local session_id=""
   local target_cwd=""
+  local codex_approval_policy=""
+  local codex_sandbox_policy=""
   while (( $# > 0 )); do
     case "$1" in
       -h|--help)
@@ -1222,6 +1235,42 @@ run_session_converter() {
           return 64
         fi
         target_cwd="$2"
+        shift 2
+        ;;
+      --codex-approval-policy)
+        # Only meaningful for claude-to-codex (codex-to-claude doesn't write
+        # a turn_context). Reject early on the wrong direction so the user
+        # sees a usage-shape error instead of an argparse error forwarded
+        # from python3.
+        if [[ "$direction" != "claude-to-codex" ]]; then
+          echo "second-codex $cmd_name: --codex-approval-policy is only valid on handoff-from-claude" >&2
+          return 64
+        fi
+        if (( $# < 2 )); then
+          echo "$usage" >&2
+          return 64
+        fi
+        if [[ -n "$codex_approval_policy" ]]; then
+          echo "second-codex $cmd_name: --codex-approval-policy specified twice" >&2
+          return 64
+        fi
+        codex_approval_policy="$2"
+        shift 2
+        ;;
+      --codex-sandbox-policy)
+        if [[ "$direction" != "claude-to-codex" ]]; then
+          echo "second-codex $cmd_name: --codex-sandbox-policy is only valid on handoff-from-claude" >&2
+          return 64
+        fi
+        if (( $# < 2 )); then
+          echo "$usage" >&2
+          return 64
+        fi
+        if [[ -n "$codex_sandbox_policy" ]]; then
+          echo "second-codex $cmd_name: --codex-sandbox-policy specified twice" >&2
+          return 64
+        fi
+        codex_sandbox_policy="$2"
         shift 2
         ;;
       -*)
@@ -1262,11 +1311,22 @@ run_session_converter() {
     return 70
   fi
 
+  # Build args. Enum validation for the codex policy flags lives in Python
+  # (argparse `choices=`); the wrapper just forwards values verbatim. An
+  # invalid value surfaces as a Python argparse error with exit 2 instead
+  # of the wrapper's exit 64 — accepted asymmetry to keep the validation
+  # source-of-truth in one place.
+  local -a converter_args=("$direction" "$session_id")
   if [[ -n "$target_cwd" ]]; then
-    python3 "$converter" "$direction" "$session_id" --target-cwd "$target_cwd"
-  else
-    python3 "$converter" "$direction" "$session_id"
+    converter_args+=(--target-cwd "$target_cwd")
   fi
+  if [[ -n "$codex_approval_policy" ]]; then
+    converter_args+=(--codex-approval-policy "$codex_approval_policy")
+  fi
+  if [[ -n "$codex_sandbox_policy" ]]; then
+    converter_args+=(--codex-sandbox-policy "$codex_sandbox_policy")
+  fi
+  python3 "$converter" "${converter_args[@]}"
 }
 
 handoff_to_claude() {
