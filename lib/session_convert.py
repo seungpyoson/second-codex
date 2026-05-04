@@ -83,6 +83,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import signal
 import subprocess
 import sys
@@ -90,7 +91,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def _install_sigterm_handler() -> None:
@@ -489,6 +490,15 @@ def claude_session_path(new_uuid: str, cwd: str) -> Path:
     return _claude_projects_base() / encode_claude_project(cwd) / f"{new_uuid}.jsonl"
 
 
+def _codex_source_cwd_from_records(records: list[dict[str, Any]]) -> str | None:
+    src_cwd_recent: str | None = None
+    for r in records:
+        c = r.get("payload", {}).get("cwd") if isinstance(r.get("payload"), dict) else None
+        if c:
+            src_cwd_recent = c
+    return src_cwd_recent
+
+
 # ---------------------------------------------------------------------------
 # Codex -> Claude
 # ---------------------------------------------------------------------------
@@ -538,8 +548,10 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
     return [r for r, k in zip(records, keep) if k]
 
 
-def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
-    """Convert a Codex rollout to a Claude session. Returns (output path, new uuid)."""
+# This legacy converter loop is intentionally not decomposed in cwd-hint fixes:
+# splitting it safely belongs to a dedicated refactor with corpus coverage.
+def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str, str | None]:  # NOSONAR
+    """Convert a Codex rollout to a Claude session. Returns (output path, new uuid, source cwd)."""
     # Reject empty / whitespace-only target_cwd at the Python boundary too.
     # The bash wrapper already rejects an empty --target-cwd, but a direct
     # library / `python3 lib/session_convert.py … --target-cwd ""` (or
@@ -553,19 +565,11 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
     if session_meta is None:
         raise ValueError(f"Source has no session_meta record: {src}")
 
-    # Pick cwd: explicit override beats most-recent record-level cwd, which
-    # beats session_meta.cwd, which beats the runtime cwd as a last resort.
-    src_cwd_recent: str | None = None
-    for r in records:
-        c = r.get("payload", {}).get("cwd") if isinstance(r.get("payload"), dict) else None
-        if c:
-            src_cwd_recent = c
-    cwd_raw = (
-        target_cwd
-        or src_cwd_recent
-        or session_meta.get("payload", {}).get("cwd")
-        or os.getcwd()
-    )
+    # Pick cwd: explicit override beats the most recent source payload.cwd
+    # (including session_meta when it is the only cwd-bearing record), which
+    # beats the runtime cwd as a last resort.
+    source_cwd = _codex_source_cwd_from_records(records)
+    cwd_raw = target_cwd or source_cwd or os.getcwd()
     # realpath() not abspath(): empirical Class F probe (2026-05-04) showed
     # `claude --resume` resolves the cwd via realpath before encoding, so
     # writing under /tmp produces -tmp-foo but Claude scans -private-tmp-foo
@@ -922,7 +926,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
 
     target_path = claude_session_path(new_uuid, cwd)
     write_jsonl(target_path, out)
-    return target_path, new_uuid
+    return target_path, new_uuid, source_cwd
 
 
 def _normalize_tool_input(tool_name: str, args: Any) -> dict[str, Any]:
@@ -1236,6 +1240,36 @@ def _normalize_tool_input_to_codex(tool_name: str, input_obj: dict[str, Any], cw
     return input_obj
 
 
+def _emit_claude_resume_cwd_note(
+    *,
+    target: Path,
+    target_cwd: str | None,
+    source_cwd: str | None,
+    new_uuid: str,
+    emit_note: Callable[[str], None],
+) -> None:
+    if target_cwd is not None or not source_cwd:
+        return
+
+    current_cwd = os.path.realpath(os.getcwd())
+    current_project = encode_claude_project(current_cwd)
+    if target.parent.name == current_project:
+        return
+
+    emit_note(f"note: converted Claude session was written for source cwd: {source_cwd}")
+    emit_note(f"note: current cwd is: {current_cwd}")
+    emit_note(
+        "note: to resume from the current cwd, rerun this handoff with: "
+        f"--target-cwd {shlex.quote(current_cwd)}"
+    )
+    expanded_source_cwd = os.path.expanduser(source_cwd)
+    if os.path.isdir(expanded_source_cwd):
+        emit_note(
+            "note: or resume from the source cwd with: "
+            f"cd {shlex.quote(expanded_source_cwd)} && claude --resume {new_uuid}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1295,12 +1329,26 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.flush()
             sys.stdout.buffer.write((line + "\n").encode("utf-8", errors="replace"))
 
+    def emit_note(line: str) -> None:
+        try:
+            sys.stderr.write(line + "\n")
+        except UnicodeEncodeError:
+            sys.stderr.flush()
+            sys.stderr.buffer.write((line + "\n").encode("utf-8", errors="replace"))
+
     if args.cmd == "codex-to-claude":
         src = find_codex_session(args.uuid)
-        target, new_uuid = codex_to_claude(src, target_cwd=args.target_cwd)
+        target, new_uuid, source_cwd = codex_to_claude(src, target_cwd=args.target_cwd)
         emit(f"converted: {src} -> {target}")
         emit(f"new session UUID: {new_uuid}")
         emit(f"resume with: claude --resume {new_uuid}")
+        _emit_claude_resume_cwd_note(
+            target=target,
+            target_cwd=args.target_cwd,
+            source_cwd=source_cwd,
+            new_uuid=new_uuid,
+            emit_note=emit_note,
+        )
         return 0
     if args.cmd == "claude-to-codex":
         src = find_claude_session(args.uuid)
