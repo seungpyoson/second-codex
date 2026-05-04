@@ -1149,4 +1149,178 @@ assert joined.count("[Tool result:") == 0, f"empty-id output incorrectly classif
 print("empty call_id always orphans (no false linkage) PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# EE (review #8 GLM BUG): Claude user records with `content` as a plain string
+# (~17% of real local user records, 2026-05-04 corpus scan) must survive
+# claude-to-codex conversion. Pre-fix: the input loop's
+# `if not isinstance(content, list): continue` silently dropped these, losing
+# user prompts in any session that mixed string-form and list-form turns.
+# Fix normalizes a string content to a single text block before the
+# isinstance check.
+# ---------------------------------------------------------------------------
+EE_SRC_UUID="00000000-0000-4000-8000-deadbeef00ee"
+EE_SRC="$CLAUDE_HOME/projects/$ENCODED_CWD/$EE_SRC_UUID.jsonl"
+python3 - "$EE_SRC" "$EE_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"type":"user","uuid":"u1","parentUuid":None,"sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":False,
+     "message":{"role":"user","content":"STRING-FORM-USER-PROMPT-CARDAMOM"}},
+    {"type":"user","uuid":"u2","parentUuid":"u1","sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:01.000Z","isSidechain":False,
+     "message":{"role":"user","content":[{"type":"text","text":"LIST-FORM-USER-PROMPT-VANILLA"}]}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+EE_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$EE_SRC_UUID")
+EE_NEW_PATH=$(echo "$EE_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$EE_NEW_PATH" <<'EOF'
+import json, sys
+records = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+user_msgs = [r["payload"]["message"] for r in records
+             if r.get("type") == "event_msg"
+             and r.get("payload", {}).get("type") == "user_message"]
+joined = "\n".join(user_msgs)
+assert "STRING-FORM-USER-PROMPT-CARDAMOM" in joined, \
+    f"string-content user record was DROPPED; got {joined!r}"
+assert "LIST-FORM-USER-PROMPT-VANILLA" in joined, \
+    f"list-content user record regression; got {joined!r}"
+print("string-content Claude user records survive claude-to-codex PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# FF (review #8 DeepSeek/Kimi/GLM): event_msg payload types observed in real
+# local rollouts but missing from _CODEX_EVENT_MSG_DOCUMENTED_DROP must
+# either drop silently (DOCUMENTED) or warn loudly (UNKNOWN). The 2026-05-04
+# corpus scan turned up `dynamic_tool_call_response`, `thread_rolled_back`,
+# and `item_completed`. All three must be silent (added to DOCUMENTED_DROP);
+# a fabricated future type must still warn.
+# ---------------------------------------------------------------------------
+FF_SRC_UUID="019dee99-1234-7000-8000-deadbeef00ff"
+FF_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${FF_SRC_UUID}.jsonl"
+python3 - "$FF_SRC" "$FF_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+    {"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"dynamic_tool_call_response","call_id":"call_X","tool":"x","content_items":[]}},
+    {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}},
+    {"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"item_completed"}},
+    {"timestamp":"2026-05-04T00:00:04.000Z","type":"event_msg","payload":{"type":"future_unknown_drift_QQQ"}},
+    {"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}],"phase":"commentary"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+FF_STDERR_FILE="$SANDBOX/ff_stderr.txt"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$FF_SRC_UUID" \
+    >/dev/null 2>"$FF_STDERR_FILE" || true
+python3 - "$FF_STDERR_FILE" <<'EOF'
+import sys
+err = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+# Documented drops must NOT warn.
+for kind in ("dynamic_tool_call_response", "thread_rolled_back", "item_completed"):
+    assert kind not in err, f"{kind} should be silent now, but warning fired:\n{err}"
+# A genuinely unknown type MUST warn — schema-drift surfacing is the
+# load-bearing contract of _warn_unknown.
+assert "future_unknown_drift_QQQ" in err, \
+    f"unknown event_msg type was suppressed silently; stderr was:\n{err!r}"
+print("documented-drop additions silent / unknown still warns PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# GG (review #8 Gemini RISK): nested task_started + turn_aborted. The
+# response_items between the INNERMOST task_started and a turn_aborted must
+# be discarded; outer-task content must survive. Pre-fix: scalar
+# pending_start was overwritten by the inner task_started, so a later
+# outer-level abort would do nothing and leak abandoned content (or, if the
+# inner abort fired without a complete, the outer task_started index was
+# already lost).
+# ---------------------------------------------------------------------------
+GG_SRC_UUID="019dee99-2234-7000-8000-deadbeef0099"
+GG_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${GG_SRC_UUID}.jsonl"
+python3 - "$GG_SRC" "$GG_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+def msg(t, ts):
+    return {"timestamp":ts,"type":"response_item",
+            "payload":{"type":"message","role":"assistant",
+                       "content":[{"type":"output_text","text":t}],"phase":"commentary"}}
+def life(kind, ts):
+    return {"timestamp":ts,"type":"event_msg","payload":{"type":kind}}
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+    msg("OUTER-BEFORE", "2026-05-04T00:00:01.000Z"),
+    life("task_started",  "2026-05-04T00:00:02.000Z"),  # outer
+    msg("OUTER-DURING-PRE-INNER", "2026-05-04T00:00:03.000Z"),
+    life("task_started",  "2026-05-04T00:00:04.000Z"),  # inner
+    msg("INNER-DOOMED-CONTENT", "2026-05-04T00:00:05.000Z"),
+    life("turn_aborted",  "2026-05-04T00:00:06.000Z"),  # aborts inner only
+    msg("OUTER-DURING-POST-INNER", "2026-05-04T00:00:07.000Z"),
+    life("task_complete", "2026-05-04T00:00:08.000Z"),  # outer completes normally
+    msg("OUTER-AFTER", "2026-05-04T00:00:09.000Z"),
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+GG_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$GG_SRC_UUID")
+GG_NEW_PATH=$(echo "$GG_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$GG_NEW_PATH" <<'EOF'
+import json, sys
+records = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+joined = "\n".join(
+    b.get("text","")
+    for r in records
+    for b in r.get("message",{}).get("content",[])
+    if isinstance(b, dict)
+)
+# Inner-task content was aborted: must be gone.
+assert "INNER-DOOMED-CONTENT" not in joined, \
+    f"inner-aborted content leaked into converted session: {joined!r}"
+# All outer-task content (before, during pre/post inner, after) survives —
+# the outer task_complete'd normally.
+for keep in ("OUTER-BEFORE", "OUTER-DURING-PRE-INNER",
+             "OUTER-DURING-POST-INNER", "OUTER-AFTER"):
+    assert keep in joined, f"outer-task content {keep!r} lost: {joined!r}"
+print("nested task_started + inner turn_aborted preserves outer content PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# HH (review #8 DeepSeek RISK): direct python3 invocation with empty
+# --target-cwd must be rejected at the Python boundary (the bash wrapper
+# already rejects empty --target-cwd; this closes the parallel hole for
+# library callers who skip the wrapper).
+# ---------------------------------------------------------------------------
+HH_SRC_UUID="019dee99-3234-7000-8000-deadbeef0088"
+HH_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${HH_SRC_UUID}.jsonl"
+python3 - "$HH_SRC" "$HH_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+    {"timestamp":"2026-05-04T00:00:01.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}],"phase":"commentary"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+set +e
+HH_STDERR=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$HH_SRC_UUID" --target-cwd "" 2>&1 >/dev/null)
+HH_RC=$?
+set -e
+case "$HH_STDERR" in
+    *"--target-cwd must not be an empty string"*)
+        [ "$HH_RC" -ne 0 ] || { echo "FAIL: empty --target-cwd accepted by Python entry point"; exit 1; }
+        echo "Python-side empty --target-cwd rejection PASSED"
+        ;;
+    *)
+        echo "FAIL: expected empty-target-cwd ValueError, got rc=$HH_RC stderr=$HH_STDERR"
+        exit 1
+        ;;
+esac
+
+
 echo "all converter sandbox tests passed"

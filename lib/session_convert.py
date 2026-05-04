@@ -30,16 +30,22 @@ Conversion semantics:
 - Codex `turn_aborted` markers cause the response_items emitted since the
   most recent `task_started` to be discarded, matching the source model's
   view that those items were never committed.
-- Codex `agent_message` events are dropped intentionally: empirical corpus
-  scan (60 rollouts / 6164 records, 2026-05-04 local data) shows 94% are
-  duplicates of a neighboring `response_item.message` and the remaining
-  ~6% are intermediate streaming pings the source model emitted during a
-  turn but never published. Adding a handler would duplicate the bulk of
-  assistant content. Other event_msg types (`token_count`, `exec_command_end`,
-  `patch_apply_end`, `mcp_tool_call_end`, `guardian_assessment`, `collab_*`,
-  `web_search_end`, `context_compacted`, `thread_name_updated`, `error`,
-  `dynamic_tool_call_request`, `agent_reasoning`) are also dropped — they
-  are streaming/metadata not load-bearing for resume context.
+- Codex `agent_message` events are dropped intentionally: full-corpus scan
+  (468 rollouts / 19619 agent_message records, 2026-05-04 local data) shows
+  ~88% are duplicates of a neighboring `response_item.message` (final
+  assistant turn) and ~12% are intermediate streaming pings the source
+  model emitted during a turn but never published. Adding a handler would
+  duplicate the bulk of assistant content. Codex `agent_reasoning` records
+  are also dropped: they carry plain-text reasoning and are dropped on the
+  same cross-vendor boundary as the encrypted reasoning blocks above —
+  reasoning content does not survive cross-vendor handoff. Other event_msg
+  types (`token_count`, `exec_command_end`, `patch_apply_end`,
+  `mcp_tool_call_end`, `guardian_assessment`, `collab_*`, `web_search_end`,
+  `context_compacted`, `thread_name_updated`, `error`,
+  `dynamic_tool_call_request`, `dynamic_tool_call_response` (shadowed by
+  matching `function_call_output`), `thread_rolled_back`, `item_completed`)
+  are streaming/metadata or shadowed-content not load-bearing for resume
+  context.
 - Claude `attachment` (hook telemetry) and `file-history-snapshot` records
   are dropped: their information is already present in the corresponding
   `tool_result` content (what the source model actually saw), or is
@@ -78,7 +84,13 @@ from typing import Any
 def _install_sigterm_handler() -> None:
     """Promote SIGTERM to SystemExit so write_jsonl's BaseException cleanup
     block runs and the .tmp file is unlinked. Default SIGTERM behavior on
-    POSIX terminates the process without raising, leaving stale tmp files."""
+    POSIX terminates the process without raising, leaving stale tmp files.
+
+    Called from main() only. Library callers (anyone importing this module
+    and calling claude_to_codex/codex_to_claude directly) must install
+    their own SIGTERM handler if they want the .tmp cleanup contract — we
+    do not auto-install at module load because that would silently
+    overwrite any signal handler the embedding application has set up."""
     def _raise_systemexit(_signum: int, _frame: Any) -> None:
         raise SystemExit(143)
     try:
@@ -132,7 +144,7 @@ _CODEX_EVENT_MSG_HANDLED: frozenset[str] = frozenset({
     "user_message", "task_started", "task_complete", "turn_aborted",
 })
 # `agent_message` is empirically a duplicate of the same-turn
-# response_item.message in 94% of normal sessions (see module docstring),
+# response_item.message in ~88% of normal sessions (see module docstring),
 # so dropping it avoids duplicating assistant content. The empirical
 # corpus did not include subagent rollouts (the `collab_*` event types
 # below hint that Codex has a sub-agent feature); if a future maintainer
@@ -146,6 +158,13 @@ _CODEX_EVENT_MSG_DOCUMENTED_DROP: frozenset[str] = frozenset({
     "collab_close_end", "collab_agent_interaction_end",
     "web_search_end", "context_compacted", "thread_name_updated",
     "error", "dynamic_tool_call_request",
+    # Empirically observed in real local rollouts (2026-05-04 corpus scan):
+    # dynamic_tool_call_response is content-bearing but its payload is also
+    # carried by the matching response_item.function_call_output (same
+    # call_id), so dropping the event_msg avoids duplicating tool output.
+    # thread_rolled_back is pure metadata ({"num_turns": N}). item_completed
+    # is a turn-completion marker.
+    "dynamic_tool_call_response", "thread_rolled_back", "item_completed",
 })
 _CLAUDE_RECORD_HANDLED: frozenset[str] = frozenset({
     "user", "assistant",
@@ -403,7 +422,14 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
     intervening task_complete) for removal.
     """
     keep = [True] * len(records)
-    pending_start: int | None = None
+    # Stack of unmatched task_started indices. Real Codex rollouts emit
+    # un-paired task_started runs in subagent / nested-task contexts (24
+    # of 468 local rollouts, 2026-05-04 corpus scan, exhibit a `task_started
+    # … task_started` sequence with no intervening lifecycle event). A
+    # scalar would silently overwrite the outer index, so a later
+    # turn_aborted at the outer level would do nothing and leak abandoned
+    # content. The stack rolls back to the innermost open task per abort.
+    pending_starts: list[int] = []
     for i, r in enumerate(records):
         rtype = r.get("type")
         ptype: str | None = None
@@ -416,20 +442,28 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
         # level). The top-level alternatives are kept defensively in case an
         # older or future Codex version emits the simpler shape.
         if rtype == "task_started" or ptype == "task_started":
-            pending_start = i
+            pending_starts.append(i)
         elif rtype == "task_complete" or ptype == "task_complete":
-            pending_start = None
+            if pending_starts:
+                pending_starts.pop()
         elif rtype == "turn_aborted" or ptype == "turn_aborted":
-            if pending_start is not None:
-                for j in range(pending_start + 1, i):
+            if pending_starts:
+                start = pending_starts.pop()
+                for j in range(start + 1, i):
                     if records[j].get("type") == "response_item":
                         keep[j] = False
-            pending_start = None
     return [r for r, k in zip(records, keep) if k]
 
 
 def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
     """Convert a Codex rollout to a Claude session. Returns (output path, new uuid)."""
+    # Reject empty-string target_cwd at the Python boundary too. The bash
+    # wrapper already rejects empty --target-cwd, but a direct library /
+    # python3 lib/session_convert.py … --target-cwd "" call would otherwise
+    # fall through `or` to source/runtime cwd, silently ignoring the
+    # explicit user intent.
+    if target_cwd is not None and not target_cwd:
+        raise ValueError("--target-cwd must not be an empty string")
     records = read_jsonl(src)
     records = _records_after_aborts_filtered(records)
     session_meta = next((r for r in records if r.get("type") == "session_meta"), None)
@@ -760,6 +794,8 @@ def _detect_codex_cli_version() -> str:
 
 def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
     """Convert a Claude session to a Codex rollout. Returns (output path, new uuid)."""
+    if target_cwd is not None and not target_cwd:
+        raise ValueError("--target-cwd must not be an empty string")
     records = read_jsonl(src)
     if not records:
         raise ValueError(f"Source is empty: {src}")
@@ -840,6 +876,15 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             continue
         role = message.get("role")
         content = message.get("content")
+        # Real Claude sessions store user-record content either as a list of
+        # blocks (tool_result, text, image, ...) or as a plain string for
+        # simple text turns (~17% of real local user records, 2026-05-04
+        # corpus scan). Normalize the string form into a single text block
+        # so the block loop below handles both shapes — without this,
+        # string-content user prompts were silently dropped from converted
+        # rollouts.
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
         if not isinstance(content, list):
             continue
 
