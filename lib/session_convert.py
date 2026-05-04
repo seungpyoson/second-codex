@@ -206,16 +206,34 @@ def _build_codex_sandbox_policy(sandbox_type: str, cwd: str) -> dict[str, Any]:
     Codex represents sandbox_policy as a tagged union keyed on `type`. For
     `read-only` and `danger-full-access` the only field is `type`. For
     `workspace-write` Codex also stores `writable_roots`, `network_access`,
-    `exclude_tmpdir_env_var`, `exclude_slash_tmp`. We populate those with
-    conservative defaults (cwd as the only writable root, no network, no
-    tmp exclusions) so a `workspace-write` resume is bounded; users who
-    need other settings can edit the produced rollout or wait on a future
-    iteration that exposes them as separate flags.
+    `exclude_tmpdir_env_var`, `exclude_slash_tmp`.
+
+    `writable_roots` lists the *additional* paths beyond cwd that
+    `workspace-write` makes writable (cwd is implicitly writable by the
+    workspace-write semantic itself). Empirical scan of 1801 native local
+    workspace-write rollouts: 1757 (97.5%) carry exactly
+    `["~/.codex/memories"]`; 25 (1.4%) add per-tool config dirs alongside;
+    19 (1%) carry only cwd. We default to the dominant memories-only
+    pattern so converted sessions look indistinguishable from native
+    Codex's typical workspace-write rollout. Users who need additional
+    writable paths can edit the produced rollout (or wait on a future
+    iteration that exposes per-field flags).
+
+    `network_access`, `exclude_tmpdir_env_var`, `exclude_slash_tmp`
+    default to `false` (most conservative — no network, no tmp
+    exclusions). `cwd` is the converted session's resolved cwd, retained
+    in the signature for callers that may want a non-default writable
+    root in the future.
     """
     if sandbox_type == "workspace-write":
+        # cwd is intentionally unused in the default — workspace-write
+        # makes cwd writable implicitly. Kept in the signature so a
+        # future flag can opt callers into `[cwd, ~/.codex/memories]` or
+        # similar without a signature change.
+        del cwd
         return {
             "type": "workspace-write",
-            "writable_roots": [cwd],
+            "writable_roots": [os.path.expanduser("~/.codex/memories")],
             "network_access": False,
             "exclude_tmpdir_env_var": False,
             "exclude_slash_tmp": False,

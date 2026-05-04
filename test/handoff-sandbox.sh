@@ -696,4 +696,97 @@ if grep -q "internal error" "$SANDBOX/missing-source-session.out"; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# session-id --cwd at scale (issue #6 sub-bullet 3): pin that the
+# rglob -> targeted-glob refactor finds the target session correctly
+# even when the sessions tree contains ~200 unrelated rollouts spread
+# across multiple YYYY/MM/DD subdirs. Pre-#6 used `sessions.rglob`
+# which would have walked every file; the new code uses a targeted
+# glob `*/*/*/rollout-*-<uuid>.jsonl` driven by `recent_rank` from
+# history. Functional verification at scale; a loose 10s budget catches
+# a regression to a quadratic algorithm but is not a tight perf bound.
+# ---------------------------------------------------------------------------
+SCALE_SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/second-codex-scale.XXXXXX")"
+trap 'rm -rf "$SCALE_SANDBOX"' EXIT
+SCALE_HOME="$SCALE_SANDBOX/home-second"
+mkdir -p "$SCALE_HOME/sessions"
+SCALE_TARGET_ID="019dee99-1006-7000-8000-deadbeefcafe"
+SCALE_TARGET_CWD="/tmp/scale-project"
+# Synthesize 200 unrelated sessions across multiple YYYY/MM/DD dirs.
+python3 - "$SCALE_HOME" "$SCALE_TARGET_ID" "$SCALE_TARGET_CWD" <<'PY'
+import json
+import sys
+import uuid
+from pathlib import Path
+
+home = Path(sys.argv[1])
+target_id = sys.argv[2]
+target_cwd = sys.argv[3]
+sessions = home / "sessions"
+
+# Spread 200 noise sessions across 5 different YYYY/MM/DD buckets so the
+# targeted glob (`*/*/*/rollout-*-<uuid>.jsonl`) has to hit multiple
+# directory paths. Pre-#6 rglob would have walked all of them.
+buckets = [
+    ("2024", "01", "15"),
+    ("2024", "06", "20"),
+    ("2025", "03", "10"),
+    ("2025", "11", "05"),
+    ("2026", "04", "30"),
+]
+for i in range(200):
+    yy, mm, dd = buckets[i % len(buckets)]
+    bucket = sessions / yy / mm / dd
+    bucket.mkdir(parents=True, exist_ok=True)
+    sid = str(uuid.uuid4())
+    fp = bucket / f"rollout-{yy}-{mm}-{dd}T00-00-{i:02d}-{sid}.jsonl"
+    fp.write_text(json.dumps({
+        "type": "session_meta",
+        "payload": {"id": sid, "cwd": f"/tmp/noise-{i}"},
+    }) + "\n")
+
+# The target session: cwd matches what we'll search for.
+target_dir = sessions / "2026" / "05" / "04"
+target_dir.mkdir(parents=True, exist_ok=True)
+target_path = target_dir / f"rollout-2026-05-04T00-00-00-{target_id}.jsonl"
+target_path.write_text(json.dumps({
+    "type": "session_meta",
+    "payload": {"id": target_id, "cwd": target_cwd},
+}) + "\n")
+
+# History ranks the target first (most recent).
+(home / "history.jsonl").write_text(
+    json.dumps({"session_id": target_id, "ts": 1777800000, "text": "target"}) + "\n"
+)
+PY
+
+mkdir -p "$SANDBOX/scale-home-a"
+SCALE_START=$(python3 -c 'import time; print(time.monotonic())')
+SCALE_OUT=$(SECOND_CODEX_SWITCH_ROOT="$SANDBOX/scale-root" \
+  CODEX_A_HOME="$SANDBOX/scale-home-a" \
+  SECOND_CODEX_HOME="$SCALE_HOME" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/scale-shim" \
+  "$REPO_ROOT/second-codex" session-id --second "$SCALE_TARGET_CWD" 2>&1)
+SCALE_RC=$?
+SCALE_END=$(python3 -c 'import time; print(time.monotonic())')
+SCALE_ELAPSED=$(python3 -c "print($SCALE_END - $SCALE_START)")
+
+if [[ "$SCALE_RC" -ne 0 ]]; then
+  echo "FAIL session-id at scale exited rc=$SCALE_RC: $SCALE_OUT"
+  exit 1
+fi
+if ! grep -Fxq "$SCALE_TARGET_ID" <<<"$SCALE_OUT"; then
+  echo "FAIL session-id at scale returned wrong id: got '$SCALE_OUT', expected '$SCALE_TARGET_ID'"
+  exit 1
+fi
+# Loose 10-second budget — a regression to rglob on a 200-file corpus
+# should still complete in ~1s on modern hardware, so 10s catches an
+# accidental quadratic algorithm but doesn't flake on slow CI.
+SCALE_TOO_SLOW=$(python3 -c "print(1 if $SCALE_ELAPSED > 10 else 0)")
+if [[ "$SCALE_TOO_SLOW" == "1" ]]; then
+  echo "FAIL session-id at scale took ${SCALE_ELAPSED}s (>10s budget) — possible regression to walk-everything algorithm"
+  exit 1
+fi
+echo "session-id finds target across 200 noise sessions in ${SCALE_ELAPSED}s PASSED"
+
 echo "PASS handoff sandbox"
