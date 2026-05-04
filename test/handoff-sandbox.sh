@@ -860,10 +860,21 @@ echo "session-id resolves symlinked cwd against physical-path rollout PASSED"
 # updates this test automatically (no drift between source-of-truth
 # and assertion). The extractor handles all four quote forms Python
 # accepts for raw strings (r"...", r'...', r"""...""", r'''...''')
-# and tolerates multi-line `re.compile(...)` formatting. Falls back
-# to fail-loud (non-zero exit) if the pattern cannot be located —
-# any future refactor that breaks extraction surfaces here, not as
-# silent test drift (Kimi round-3 hygiene close).
+# and tolerates multi-line `re.compile(...)` formatting.
+#
+# Quote-alternation ordering is load-bearing: triple-quote variants
+# (""" and ''') MUST precede single-char variants (" and ') in the
+# regex alternation. Python's `re` module is leftmost-first, so a
+# misordered alternation `"|"""` would match `""` (empty content)
+# inside a `r"""..."""` source, returning an empty regex. The unit
+# test below would fail-loud on that empty regex (the first valid-
+# UUID assertion would not match), but the documented ordering
+# avoids the failure surface entirely.
+#
+# Falls back to fail-loud (non-zero exit) if the pattern cannot be
+# located — any future refactor that breaks extraction surfaces
+# here, not as silent test drift (Kimi round-3 hygiene close;
+# DeepSeek round-4 ordering-doc close).
 # ---------------------------------------------------------------------------
 WRAPPER_REGEX=$(python3 - "$REPO_ROOT/second-codex" <<'PY'
 import re
