@@ -1254,6 +1254,13 @@ run_session_converter() {
           echo "second-codex $cmd_name: --codex-approval-policy specified twice" >&2
           return 64
         fi
+        case "$2" in
+          untrusted|on-request|on-failure|never) ;;
+          *)
+            echo "second-codex $cmd_name: --codex-approval-policy must be one of {untrusted, on-request, on-failure, never}; got '$2'" >&2
+            return 64
+            ;;
+        esac
         codex_approval_policy="$2"
         shift 2
         ;;
@@ -1270,6 +1277,13 @@ run_session_converter() {
           echo "second-codex $cmd_name: --codex-sandbox-policy specified twice" >&2
           return 64
         fi
+        case "$2" in
+          read-only|workspace-write|danger-full-access) ;;
+          *)
+            echo "second-codex $cmd_name: --codex-sandbox-policy must be one of {read-only, workspace-write, danger-full-access}; got '$2'" >&2
+            return 64
+            ;;
+        esac
         codex_sandbox_policy="$2"
         shift 2
         ;;

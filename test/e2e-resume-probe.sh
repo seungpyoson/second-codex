@@ -65,7 +65,13 @@ src_uuid, cwd, marker = sys.argv[1], sys.argv[2], sys.argv[3]
 src = Path.home() / ".codex/sessions/2026/05/04" / f"rollout-2026-05-04T00-00-00-{src_uuid}.jsonl"
 records = [
     {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":src_uuid,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"second-codex-e2e","cli_version":"0.0.0-e2e","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex, a coding agent.\n"}}},
-    {"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":cwd,"approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}},
+    # Synthesize the source's turn_context using Codex's actual schema:
+    # `sandbox_policy.type` (tagged-union discriminator), not `mode`.
+    # Empirical scan of 4869 native local Codex rollouts uses `type`;
+    # only converter-emitted output ever used `mode` (pre-#6 bug).
+    # Using the native shape here keeps the codex-to-claude direction's
+    # source side faithful to what real Codex emits.
+    {"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":cwd,"approval_policy":"on-request","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}},
     {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":f"Earlier I asked you to remember the marker {marker}.","images":[],"local_images":[],"text_elements":[]}},
     {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":f"Acknowledged. The marker is {marker}."}],"phase":"commentary"}},
 ]
@@ -114,6 +120,27 @@ NEW_CODEX_UUID="$(echo "$CC2_OUT" | awk '/^new session UUID:/ {print $NF}')"
 NEW_CODEX_PATH="$(echo "$CC2_OUT" | awk -F'-> ' '/^converted:/ {print $2}')"
 [ -n "$NEW_CODEX_UUID" ] || { echo "FAIL: claude-to-codex did not print a new UUID"; exit 1; }
 [ -n "$NEW_CODEX_PATH" ] || { echo "FAIL: claude-to-codex did not print a 'converted: ... -> <path>' line"; exit 1; }
+
+# Pre-resume schema check (issue #6 sub-bullet 2b): post-#6 the
+# converter writes sandbox_policy: {"type": "..."} as Codex's tagged-
+# union discriminator. If a regression reverts to the legacy
+# {"mode": "..."} shape, fail loud here instead of silently relying
+# on Codex resume's tolerance.
+python3 - "$NEW_CODEX_PATH" <<'EOF'
+import json, sys
+ok = False
+for line in open(sys.argv[1]):
+    if not line.strip(): continue
+    r = json.loads(line)
+    if r.get("type") == "turn_context":
+        sp = r.get("payload", {}).get("sandbox_policy", {})
+        assert "type" in sp, f"sandbox_policy missing 'type' discriminator: {sp!r}"
+        assert "mode" not in sp, f"sandbox_policy uses legacy 'mode' key: {sp!r}"
+        ok = True
+        break
+assert ok, "no turn_context emitted by claude-to-codex"
+print("[cc2] pre-resume schema check OK (sandbox_policy uses 'type' discriminator)")
+EOF
 
 cd "$PROBE_CWD"
 CODEX_REPLY="$(codex exec --skip-git-repo-check resume "$NEW_CODEX_UUID" "What was the marker I asked you to remember? Reply with just the marker." 2>&1 | tr -d '\r' | tail -10)"

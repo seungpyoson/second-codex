@@ -1765,8 +1765,13 @@ sp = turn_context.get("sandbox_policy", {})
 assert sp.get("type") == "workspace-write", f"type wrong: {sp!r}"
 # Conservative defaults: cwd as the only writable root, no network, no
 # tmp exclusions. Realpath because converter realpaths the cwd.
-assert sp.get("writable_roots") == [os.path.realpath(expected_cwd)], \
-    f"writable_roots default wrong: {sp.get('writable_roots')!r} (expected [{os.path.realpath(expected_cwd)!r}])"
+# Empirical default: 1757/1801 native workspace-write rollouts have
+# writable_roots = ['~/.codex/memories'] only (cwd is implicit under
+# workspace-write). #6 updated the converter's default to match this
+# dominant native pattern.
+expected_writable = [os.path.expanduser('~/.codex/memories')]
+assert sp.get("writable_roots") == expected_writable, \
+    f"writable_roots default wrong: {sp.get('writable_roots')!r} (expected {expected_writable!r})"
 assert sp.get("network_access") is False, f"network_access default wrong: {sp.get('network_access')!r}"
 assert sp.get("exclude_tmpdir_env_var") is False, f"exclude_tmpdir_env_var wrong: {sp.get('exclude_tmpdir_env_var')!r}"
 assert sp.get("exclude_slash_tmp") is False, f"exclude_slash_tmp wrong: {sp.get('exclude_slash_tmp')!r}"
@@ -1806,8 +1811,11 @@ case "$OO_BAD_SP" in
         ;;
 esac
 
-# Also assert the wrapper rejects --codex-approval-policy on the wrong
-# direction (handoff-to-claude).
+# Also assert the wrapper rejects BOTH --codex-approval-policy and
+# --codex-sandbox-policy on the wrong direction (handoff-to-claude has
+# no turn_context to populate). Symmetric pin so the wrapper's two
+# direction-guards stay covered together — if one regresses while the
+# other is still tested, we'd ship a half-broken validator.
 set +e
 OO_WRONG_DIR=$("$REPO_ROOT/second-codex" handoff-to-claude "$LL_SRC_UUID" --codex-approval-policy never 2>&1 >/dev/null)
 OO_WRONG_DIR_RC=$?
@@ -1815,10 +1823,23 @@ set -e
 case "$OO_WRONG_DIR" in
     *"only valid on handoff-from-claude"*)
         [ "$OO_WRONG_DIR_RC" -ne 0 ] || { echo "FAIL: --codex-approval-policy accepted on handoff-to-claude (rc=0)"; exit 1; }
-        echo "wrapper rejects --codex-approval-policy on wrong direction PASSED"
         ;;
     *)
         echo "FAIL: expected wrong-direction error for --codex-approval-policy on handoff-to-claude, got rc=$OO_WRONG_DIR_RC stderr=$OO_WRONG_DIR"
+        exit 1
+        ;;
+esac
+set +e
+OO_WRONG_DIR_SP=$("$REPO_ROOT/second-codex" handoff-to-claude "$LL_SRC_UUID" --codex-sandbox-policy danger-full-access 2>&1 >/dev/null)
+OO_WRONG_DIR_SP_RC=$?
+set -e
+case "$OO_WRONG_DIR_SP" in
+    *"only valid on handoff-from-claude"*)
+        [ "$OO_WRONG_DIR_SP_RC" -ne 0 ] || { echo "FAIL: --codex-sandbox-policy accepted on handoff-to-claude (rc=0)"; exit 1; }
+        echo "wrapper rejects --codex-{approval,sandbox}-policy on wrong direction PASSED"
+        ;;
+    *)
+        echo "FAIL: expected wrong-direction error for --codex-sandbox-policy on handoff-to-claude, got rc=$OO_WRONG_DIR_SP_RC stderr=$OO_WRONG_DIR_SP"
         exit 1
         ;;
 esac
