@@ -186,9 +186,9 @@ assert_blocked plugin-auth plugin auth
 assert_blocked skill-login skill login
 assert_blocked app-oauth app oauth
 
-# Regression guard: empty-args wrapper invocation must not crash under
-# bash 3.2 nounset (`local args=("$@")` triggers "args[@]: unbound variable"
-# on macOS system bash when `$@` has zero elements).
+# Regression guard: empty-args wrapper invocation must not crash under bash 3.2
+# nounset. The crash trigger is downstream `"${args[@]}"` value expansion after
+# `local args=("$@")` receives zero elements.
 : > "$SANDBOX/codex.log"
 empty_args_out="$SANDBOX/empty-args.out"
 set +e
@@ -207,9 +207,9 @@ if (( empty_args_rc != 0 )); then
 fi
 assert_grep "^home=$SANDBOX/home-second args=$" "$SANDBOX/codex.log"
 
-# Regression guard: setup commands with no sub-args hit the same bash 3.2
-# nounset path inside classify_known_command (`local setup_args=("$@")` after
-# `shift`). `second-codex mcp` must reroute cleanly without unbound variable.
+# Smoke test: setup commands with no sub-args must reroute cleanly. The current
+# classify_known_command loop is count-first, so this is not load-bearing for
+# the bash 3.2 value-expansion guard; see the per-site comment in second-codex.
 : > "$SANDBOX/codex.log"
 setup_no_subargs_out="$SANDBOX/setup-no-subargs.out"
 set +e

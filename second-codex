@@ -356,16 +356,16 @@ classify_known_command() {
   fi
 
   if token_is_setup_command "$command"; then
-    # Bash 3.2 nounset class-of-problem guard (see classify_command).
-    # Empirical: the inner `local setup_args=("$@")` does not crash today
-    # for `second-codex <setup>` no-subarg invocations because `$@` was set
-    # by the outer caller before shift. Guard kept for defense-in-depth and
-    # symmetry with the other three sites — fall-through default is `reroute`.
+    # Defense-in-depth for the bash 3.2 nounset class in classify_command:
+    # count-first loops using `${#setup_args[@]}` are safe today, so this
+    # fall-through guard is a tripwire for future value-expansion refactors.
     if (( $# == 0 )); then
       echo reroute
       return
     fi
     local subcommand="" marketplace_subcommand="" after_separator=0
+    # Keep the zero-arg guard above if this loop ever switches from count-first
+    # indexing to `for token in "${setup_args[@]}"` value expansion.
     local setup_args=("$@")
     local j=0
     while (( j < ${#setup_args[@]} )); do
@@ -422,13 +422,16 @@ classify_known_command() {
 }
 
 classify_command() {
-  # Bash 3.2 (macOS /bin/bash) errors on `local args=("$@")` when $# == 0
-  # because nounset flags the implicit unset-array assignment. Guard explicitly
-  # so the no-args fall-through (`echo second`) still applies cleanly.
+  # Bash 3.2 (macOS /bin/bash) accepts `local args=("$@")` with zero args, but
+  # value-expansion of `"${args[@]}"` below crashes under nounset. Count
+  # expansion (`${#args[@]}`) is safe; bash 3.2 reports the crash at this
+  # function declaration line, which makes the failure look like assignment.
   if (( $# == 0 )); then
     echo second
     return
   fi
+  # Keep the zero-arg guard above before any `for arg in "${args[@]}"` value
+  # expansion.
   local args=("$@")
   local i=0 saw_ambiguous_option=0 scan_after_ambiguous_option=0 arg
   for arg in "${args[@]}"; do
@@ -1020,10 +1023,14 @@ EOF
 }
 
 find_session_id_after_resume_command() {
-  # Same bash 3.2 nounset guard as classify_command — fall-through is `return 1`.
+  # Defense-in-depth for the bash 3.2 nounset class in classify_command:
+  # this count-first loop is safe today, but the guard preserves the existing
+  # fall-through if a future refactor introduces empty-array value expansion.
   if (( $# == 0 )); then
     return 1
   fi
+  # Keep the zero-arg guard above if this loop ever switches from count-first
+  # indexing to `for arg in "${args[@]}"` value expansion.
   local args=("$@")
   local i=0 saw_ambiguous_option=0 arg
   while (( i < ${#args[@]} )); do
@@ -1070,10 +1077,14 @@ find_session_id_after_resume_command() {
 }
 
 find_resume_session_arg() {
-  # Same bash 3.2 nounset guard as classify_command — fall-through is `return 1`.
+  # Defense-in-depth for the bash 3.2 nounset class in classify_command:
+  # this count-first loop is safe today, but the guard preserves the existing
+  # fall-through if a future refactor introduces empty-array value expansion.
   if (( $# == 0 )); then
     return 1
   fi
+  # Keep the zero-arg guard above if this loop ever switches from count-first
+  # indexing to `for arg in "${args[@]}"` value expansion.
   local args=("$@")
   local i=0 saw_ambiguous_option=0 arg
   while (( i < ${#args[@]} )); do
