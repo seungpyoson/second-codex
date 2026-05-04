@@ -462,13 +462,13 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
 
 def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
     """Convert a Codex rollout to a Claude session. Returns (output path, new uuid)."""
-    # Reject empty-string target_cwd at the Python boundary too. The bash
-    # wrapper already rejects empty --target-cwd, but a direct library /
-    # python3 lib/session_convert.py … --target-cwd "" call would otherwise
-    # fall through `or` to source/runtime cwd, silently ignoring the
-    # explicit user intent.
-    if target_cwd is not None and not target_cwd:
-        raise ValueError("--target-cwd must not be an empty string")
+    # Reject empty / whitespace-only target_cwd at the Python boundary too.
+    # The bash wrapper already rejects an empty --target-cwd, but a direct
+    # library / `python3 lib/session_convert.py … --target-cwd ""` (or
+    # `"   "`) call would otherwise fall through `or` to source/runtime
+    # cwd, silently ignoring the explicit user intent.
+    if target_cwd is not None and not target_cwd.strip():
+        raise ValueError("--target-cwd must not be empty or whitespace-only")
     records = read_jsonl(src)
     records = _records_after_aborts_filtered(records)
     session_meta = next((r for r in records if r.get("type") == "session_meta"), None)
@@ -799,8 +799,8 @@ def _detect_codex_cli_version() -> str:
 
 def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
     """Convert a Claude session to a Codex rollout. Returns (output path, new uuid)."""
-    if target_cwd is not None and not target_cwd:
-        raise ValueError("--target-cwd must not be an empty string")
+    if target_cwd is not None and not target_cwd.strip():
+        raise ValueError("--target-cwd must not be empty or whitespace-only")
     records = read_jsonl(src)
     if not records:
         raise ValueError(f"Source is empty: {src}")

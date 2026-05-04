@@ -105,7 +105,7 @@ What is preserved: text turns, tool calls and results (with linkage for the mapp
 
 What is dropped on cross-vendor:
 
-- Reasoning / thinking blocks — vendor-issued cryptographic signatures (`signature`, `encrypted_content`) cannot round-trip, and including them causes the receiving API to reject the turn.
+- Reasoning / thinking blocks — vendor-issued cryptographic signatures (`signature`, `encrypted_content`) cannot round-trip. Dropping them is the safe-by-construction policy: the converted session resumes successfully without them (verified by `test/e2e-resume-probe.sh`). The earlier "including them causes the receiving API to reject the turn" framing was an X-causes-Y claim observed only with X-present, never with an X-absent control, and has been withdrawn — the underlying causal mechanism remains unconfirmed.
 - Claude `attachment` (hook telemetry) and `file-history-snapshot` records — the load-bearing content is already in the corresponding `tool_result` blocks.
 - Codex `agent_message` events — full-corpus scan (468 rollouts / 19,619 records) shows ~88% are duplicates of a neighboring `response_item.message` (final assistant turn) and ~12% are intermediate streaming status pings the source model emitted but never published. Adding a handler would duplicate assistant content for the bulk case.
 - Codex `agent_reasoning` events — these carry plain-text reasoning and are dropped on the same cross-vendor boundary as the encrypted reasoning blocks above; reasoning content does not survive cross-vendor handoff.
@@ -116,7 +116,7 @@ Tool taxonomy: only `Bash` ↔ `exec_command` round-trips structurally as a nati
 
 Genuinely unknown record types (a future Codex/Claude schema addition not in the documented drop-list) emit a stderr warning and are dropped, surfacing schema drift instead of letting it become silent loss.
 
-Both converters require `python3`. The receiver's native resume validates schema; an unrecognized rollout is rejected without side effects on the source session.
+Both converters require `python3`. Converters write a fresh file under a new UUID and never mutate the source session, so any acceptance / rejection by the receiver is contained to the converted file. The exact validation behavior on a deliberately malformed rollout is the receiver's contract and is not exercised by this repo's tests.
 
 End-to-end resume acceptance has been verified manually with both `claude --resume <new_uuid>` and `codex exec resume <new_uuid>`: a marker placed in a *prior turn* of the source session is recalled by the receiving model after conversion, which only happens if the receiver actually loaded the converted history into context. The probe lives in `test/e2e-resume-probe.sh` and is not part of the standard `bash test/converter-sandbox.sh` suite because it requires live API access.
 

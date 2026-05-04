@@ -623,7 +623,14 @@ echo "relative --target-cwd resolves to absolute PASSED"
   echo "FAIL: empty --target-cwd should be rejected"; exit 1; }
 grep -q "must not be empty" "$SANDBOX/empty-cwd.out" || {
   echo "FAIL: empty --target-cwd error message missing 'must not be empty'"; exit 1; }
-echo "empty --target-cwd rejected PASSED"
+# Whitespace-only must also be rejected by the bash wrapper (round-10
+# follow-up: extends scenario O to mirror the wrapper guard upgrade from
+# `-z` to `[[ =~ ^[[:space:]]*$ ]]`).
+"$REPO_ROOT/second-codex" handoff-to-claude "$CODEX_SRC_UUID" --target-cwd $'  \t  ' >"$SANDBOX/whitespace-cwd.out" 2>&1 && {
+  echo "FAIL: whitespace-only --target-cwd should be rejected by wrapper"; exit 1; }
+grep -q "must not be empty or whitespace-only" "$SANDBOX/whitespace-cwd.out" || {
+  echo "FAIL: whitespace-only --target-cwd wrapper error missing expected message; got $(cat "$SANDBOX/whitespace-cwd.out")"; exit 1; }
+echo "empty + whitespace --target-cwd rejected by wrapper PASSED"
 
 # ---------------------------------------------------------------------------
 # P (R6): UUIDv7 fallback (Python <3.13 without uuid.uuid7) emits valid
@@ -1317,11 +1324,28 @@ HH_STDERR=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
 HH_RC=$?
 set -e
 case "$HH_STDERR" in
-    *"--target-cwd must not be an empty string"*)
+    *"--target-cwd must not be empty or whitespace-only"*)
         [ "$HH_RC" -ne 0 ] || { echo "FAIL: empty --target-cwd accepted by Python entry point"; exit 1; }
         ;;
     *)
         echo "FAIL: expected empty-target-cwd ValueError (codex-to-claude), got rc=$HH_RC stderr=$HH_STDERR"
+        exit 1
+        ;;
+esac
+# Whitespace-only --target-cwd must also be rejected (round-10 follow-up:
+# DeepSeek POLISH — `not target_cwd` lets `"   "` through Python truthiness;
+# `not target_cwd.strip()` closes the same class of bypass).
+set +e
+HH_WS_STDERR=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$HH_SRC_UUID" --target-cwd "   " 2>&1 >/dev/null)
+HH_WS_RC=$?
+set -e
+case "$HH_WS_STDERR" in
+    *"--target-cwd must not be empty or whitespace-only"*)
+        [ "$HH_WS_RC" -ne 0 ] || { echo "FAIL: whitespace-only --target-cwd accepted by codex-to-claude"; exit 1; }
+        ;;
+    *)
+        echo "FAIL: expected whitespace-only-target-cwd ValueError (codex-to-claude), got rc=$HH_WS_RC stderr=$HH_WS_STDERR"
         exit 1
         ;;
 esac
@@ -1346,12 +1370,27 @@ HH_C2C_STDERR=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
 HH_C2C_RC=$?
 set -e
 case "$HH_C2C_STDERR" in
-    *"--target-cwd must not be an empty string"*)
+    *"--target-cwd must not be empty or whitespace-only"*)
         [ "$HH_C2C_RC" -ne 0 ] || { echo "FAIL: empty --target-cwd accepted by claude-to-codex entry"; exit 1; }
-        echo "Python-side empty --target-cwd rejection (both directions) PASSED"
         ;;
     *)
         echo "FAIL: expected empty-target-cwd ValueError (claude-to-codex), got rc=$HH_C2C_RC stderr=$HH_C2C_STDERR"
+        exit 1
+        ;;
+esac
+# Whitespace-only parity check on claude-to-codex (round-10 follow-up).
+set +e
+HH_C2C_WS_STDERR=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$HH_CLAUDE_SRC_UUID" --target-cwd $'  	  ' 2>&1 >/dev/null)
+HH_C2C_WS_RC=$?
+set -e
+case "$HH_C2C_WS_STDERR" in
+    *"--target-cwd must not be empty or whitespace-only"*)
+        [ "$HH_C2C_WS_RC" -ne 0 ] || { echo "FAIL: whitespace-only --target-cwd accepted by claude-to-codex"; exit 1; }
+        echo "Python-side empty + whitespace --target-cwd rejection (both directions) PASSED"
+        ;;
+    *)
+        echo "FAIL: expected whitespace-only-target-cwd ValueError (claude-to-codex), got rc=$HH_C2C_WS_RC stderr=$HH_C2C_WS_STDERR"
         exit 1
         ;;
 esac
