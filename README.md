@@ -115,7 +115,11 @@ Tool taxonomy: only `Bash` ↔ `exec_command` round-trips structurally as a nati
 
 Genuinely unknown record types (a future Codex/Claude schema addition not in the documented drop-list) emit a stderr warning and are dropped, surfacing schema drift instead of letting it become silent loss.
 
-Both converters require `python3`. The receiver's native resume validates schema; an unrecognized rollout is rejected without side effects on the source session. Resume against a converted session has not yet been validated end-to-end against `claude --resume` and `codex resume` in CI — structural tests cover the JSONL shape, not the receiver's acceptance behavior.
+Both converters require `python3`. The receiver's native resume validates schema; an unrecognized rollout is rejected without side effects on the source session.
+
+End-to-end resume acceptance has been verified manually with both `claude --resume <new_uuid>` and `codex exec resume <new_uuid>`: a marker placed in a *prior turn* of the source session is recalled by the receiving model after conversion, which only happens if the receiver actually loaded the converted history into context. The probe lives in `test/e2e-resume-probe.sh` and is not part of the standard `bash test/converter-sandbox.sh` suite because it requires live API access.
+
+The Claude `~/.claude/projects/<encoded-cwd>/` encoding rule was reverse-engineered from real local sessions: realpath the cwd, then replace every non-`[A-Za-z0-9-]` character with `-`. On macOS this means `/tmp/foo` becomes `-private-tmp-foo` (because `/tmp` symlinks to `/private/tmp`), `~/.claude` becomes `-Users-<u>--claude`, and `Application Support` becomes `Application-Support`. An earlier rule that only replaced `/` with `-` left converted sessions invisible to `claude --resume` for any source path traversing a macOS symlink.
 
 ## Security Notes
 

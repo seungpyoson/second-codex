@@ -13,8 +13,14 @@ trap 'rm -rf "$SANDBOX"' EXIT
 CODEX_HOME="$SANDBOX/codex"
 CLAUDE_HOME="$SANDBOX/claude"
 CWD="/tmp/sandbox-project"
+# Encode the sandbox CWD using the converter's actual rule (realpath then
+# strip non-alphanumeric-non-dash). On macOS /tmp realpath-resolves to
+# /private/tmp; the converter writes to the realpath-encoded dir so that
+# `claude --resume` (which also realpaths) finds the file.
+encode_claude_dir() { python3 -c 'import os, re, sys; print(re.sub(r"[^A-Za-z0-9-]", "-", os.path.realpath(sys.argv[1])))' "$1"; }
+ENCODED_CWD="$(encode_claude_dir "$CWD")"
 mkdir -p "$CODEX_HOME/sessions/2026/05/04"
-mkdir -p "$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)"
+mkdir -p "$CLAUDE_HOME/projects/$ENCODED_CWD"
 
 # ---------------------------------------------------------------------------
 # Build a synthetic Codex source rollout (text + tool call).
@@ -40,7 +46,7 @@ CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$CODEX_SRC_UUID" >"$OUT" 2>&1
 grep -q "^new session UUID:" "$OUT"
 NEW_CLAUDE_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-NEW_CLAUDE_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$NEW_CLAUDE_UUID.jsonl"
+NEW_CLAUDE_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$NEW_CLAUDE_UUID.jsonl"
 [ -f "$NEW_CLAUDE_PATH" ] || { echo "FAIL converter did not write $NEW_CLAUDE_PATH"; exit 1; }
 
 # Assert structural properties of the converted Claude session.
@@ -102,7 +108,7 @@ EOF
 # Build a synthetic Claude source session (text + tool call) for reverse direction.
 # ---------------------------------------------------------------------------
 CLAUDE_SRC_UUID="00000000-0000-4000-8000-00000000000c"
-CLAUDE_SRC="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$CLAUDE_SRC_UUID.jsonl"
+CLAUDE_SRC="$CLAUDE_HOME/projects/$ENCODED_CWD/$CLAUDE_SRC_UUID.jsonl"
 cat > "$CLAUDE_SRC" <<'EOF'
 {"type":"user","uuid":"u1","parentUuid":null,"sessionId":"00000000-0000-4000-8000-00000000000c","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"List files"}]}}
 {"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"00000000-0000-4000-8000-00000000000c","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:01.000Z","isSidechain":false,"requestId":"req_t","message":{"id":"m1","type":"message","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"OK"},{"type":"tool_use","id":"toolu_TESTfixed01","name":"Bash","input":{"command":"ls","description":"List"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":10}}}
@@ -266,7 +272,7 @@ OUT="$SANDBOX/ta.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TA_UUID" >"$OUT" 2>&1
 TA_CLAUDE_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TA_CLAUDE_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TA_CLAUDE_UUID.jsonl"
+TA_CLAUDE_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TA_CLAUDE_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -281,7 +287,7 @@ EOF
 # Atomicity: write_jsonl uses tmp+rename. The temp file should not exist
 # after a successful conversion, and the target file should be present.
 # ---------------------------------------------------------------------------
-TARGET_DIR="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)"
+TARGET_DIR="$CLAUDE_HOME/projects/$ENCODED_CWD"
 LEFTOVERS="$(find "$TARGET_DIR" -name '*.tmp' 2>/dev/null | head -1)"
 if [ -n "$LEFTOVERS" ]; then
     echo "FAIL: temp files left after successful conversions: $LEFTOVERS"
@@ -321,12 +327,13 @@ cat > "$CT_PATH" <<EOF
 EOF
 
 OVERRIDE_CWD="/tmp/sandbox-override-target"
-mkdir -p "$CLAUDE_HOME/projects/$(printf %s "$OVERRIDE_CWD" | tr / -)"
+ENCODED_OVERRIDE="$(encode_claude_dir "$OVERRIDE_CWD")"
+mkdir -p "$CLAUDE_HOME/projects/$ENCODED_OVERRIDE"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   "$REPO_ROOT/second-codex" handoff-to-claude "$CT_UUID" --target-cwd "$OVERRIDE_CWD" >"$SANDBOX/ct.out" 2>&1
 CT_PRODUCED="$(grep '^converted:' "$SANDBOX/ct.out" | awk -F'-> ' '{print $2}')"
 case "$CT_PRODUCED" in
-    *"$(printf %s "$OVERRIDE_CWD" | tr / -)"*) : ;;
+    *"$ENCODED_OVERRIDE"*) : ;;
     *) echo "FAIL: --target-cwd not honored: $CT_PRODUCED"; exit 1 ;;
 esac
 echo "wrapper --help / --target-cwd PASSED"
@@ -354,7 +361,7 @@ OUT="$SANDBOX/topabort.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TJ_UUID" >"$OUT" 2>&1
 TJ_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TJ_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TJ_NEW_UUID.jsonl"
+TJ_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TJ_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -382,7 +389,7 @@ OUT="$SANDBOX/unicode.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TH_UUID" >"$OUT" 2>&1
 TH_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TH_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TH_NEW_UUID.jsonl"
+TH_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TH_NEW_UUID.jsonl"
 
 # Bytes on disk must be the unescaped UTF-8, not \uXXXX escape sequences.
 if grep -q '\\\\u' "$TH_NEW_PATH"; then
@@ -407,7 +414,7 @@ EOF
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TI_UUID" >"$SANDBOX/malformed.stdout" 2>"$SANDBOX/malformed.stderr"
 TI_NEW_UUID="$(grep '^new session UUID:' "$SANDBOX/malformed.stdout" | awk '{print $NF}')"
-TI_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TI_NEW_UUID.jsonl"
+TI_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TI_NEW_UUID.jsonl"
 grep -q "warning: skipping malformed JSON line" "$SANDBOX/malformed.stderr"
 grep -q "JSONDecodeError" "$SANDBOX/malformed.stderr"
 # stderr should NOT echo the offending line content (privacy: avoid leaking
@@ -441,7 +448,7 @@ OUT="$SANDBOX/c2c-unmapped.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$CODEX_UNMAPPED_UUID" >"$OUT" 2>&1
 NEW_CLAUDE_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-NEW_CLAUDE_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$NEW_CLAUDE_UUID.jsonl"
+NEW_CLAUDE_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$NEW_CLAUDE_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -460,7 +467,7 @@ EOF
 
 # Claude source with an unknown tool (Glob).
 CLAUDE_UNMAPPED_UUID="00000000-0000-4000-8000-00000000000e"
-CLAUDE_UNMAPPED="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$CLAUDE_UNMAPPED_UUID.jsonl"
+CLAUDE_UNMAPPED="$CLAUDE_HOME/projects/$ENCODED_CWD/$CLAUDE_UNMAPPED_UUID.jsonl"
 cat > "$CLAUDE_UNMAPPED" <<'EOF'
 {"type":"user","uuid":"u1","parentUuid":null,"sessionId":"00000000-0000-4000-8000-00000000000e","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"Find files"}]}}
 {"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"00000000-0000-4000-8000-00000000000e","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:01.000Z","isSidechain":false,"requestId":"req_t","message":{"id":"m1","type":"message","role":"assistant","model":"claude-opus-4-7","content":[{"type":"tool_use","id":"toolu_UNMAPPED1","name":"Glob","input":{"pattern":"*.py"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":10}}}
@@ -518,7 +525,7 @@ OUT="$SANDBOX/nested-abort.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TK_UUID" >"$OUT" 2>&1
 TK_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TK_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TK_NEW_UUID.jsonl"
+TK_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TK_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -552,7 +559,7 @@ CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
     exit 1
   }
 TL_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TL_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TL_NEW_UUID.jsonl"
+TL_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TL_NEW_UUID.jsonl"
 grep -q '🌶' "$TL_NEW_PATH" || { echo "FAIL: emoji not preserved under C locale"; exit 1; }
 grep -q '漢字' "$TL_NEW_PATH" || { echo "FAIL: CJK not preserved under C locale"; exit 1; }
 echo "UTF-8 round-trip under C locale PASSED"
@@ -582,12 +589,12 @@ cat > "$TN_PATH" <<EOF
 EOF
 
 mkdir -p "$SANDBOX/sub-target"
-# Compute expected encoding using the same abspath() logic the converter
-# uses, so the comparison is independent of macOS /var → /private/var
-# symlink quirks (bash `pwd` returns logical path, Python's getcwd
-# returns physical path).
-EXPECTED_ABS="$( cd "$SANDBOX" && python3 -c 'import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "../sub-target" )"
-EXPECTED_ENC="$(printf %s "$EXPECTED_ABS" | tr / -)"
+# Compute expected encoding using the same realpath() + non-alphanumeric-
+# dash strip the converter uses (Class F empirical fix: claude --resume
+# resolves cwd via realpath before encoding, so the converter must too).
+EXPECTED_ENC="$( cd "$SANDBOX" && python3 -c 'import os, re, sys
+real = os.path.realpath(os.path.expanduser(sys.argv[1]))
+print(re.sub(r"[^A-Za-z0-9-]", "-", real))' "../sub-target" )"
 LITERAL_ENC="..-sub-target"
 
 OUT="$SANDBOX/rel-cwd.out"
@@ -659,7 +666,7 @@ OUT="$SANDBOX/ts.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TQ_UUID" >"$OUT" 2>&1
 TQ_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TQ_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TQ_NEW_UUID.jsonl"
+TQ_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TQ_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -678,7 +685,7 @@ EOF
 # by ts secondarily).
 # ---------------------------------------------------------------------------
 TR_UUID="00000000-0000-4000-8000-00000000002a"
-TR_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TR_UUID.jsonl"
+TR_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TR_UUID.jsonl"
 cat > "$TR_PATH" <<'EOF'
 {"type":"user","uuid":"u1","parentUuid":null,"sessionId":"00000000-0000-4000-8000-00000000002a","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2025-03-01T08:00:00.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"do work"}]}}
 {"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"00000000-0000-4000-8000-00000000002a","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2025-03-01T08:00:01.000Z","isSidechain":false,"requestId":"req_t","message":{"id":"m1","type":"message","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"thinking out loud"},{"type":"tool_use","id":"toolu_dist1","name":"Bash","input":{"command":"ls"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":10}}}
@@ -718,7 +725,7 @@ OUT="$SANDBOX/no-ts.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TS_UUID" >"$OUT" 2>&1
 TS_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TS_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TS_NEW_UUID.jsonl"
+TS_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TS_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -765,7 +772,7 @@ OUT="$SANDBOX/ctc.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TT_UUID" >"$OUT" 2>&1
 TT_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TT_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TT_NEW_UUID.jsonl"
+TT_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TT_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -803,7 +810,7 @@ OUT="$SANDBOX/wsc.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TU_UUID" >"$OUT" 2>&1
 TU_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TU_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TU_NEW_UUID.jsonl"
+TU_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TU_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -873,7 +880,7 @@ OUT="$SANDBOX/am.out"
 CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
   python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TW_UUID" >"$OUT" 2>"$SANDBOX/am.stderr"
 TW_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TW_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TW_NEW_UUID.jsonl"
+TW_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TW_NEW_UUID.jsonl"
 
 python3 - <<EOF
 import json
@@ -925,7 +932,7 @@ CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
     exit 1
   }
 TX_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
-TX_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TX_NEW_UUID.jsonl"
+TX_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TX_NEW_UUID.jsonl"
 grep -q "X-VALID-MARKER-LIME" "$TX_NEW_PATH" || {
   echo "FAIL: valid line lost when source has bad UTF-8 bytes"; exit 1; }
 echo "invalid-UTF-8 source warn-and-skip PASSED"
@@ -980,6 +987,37 @@ with tempfile.TemporaryDirectory() as td:
     tmp = target.with_name(target.name + ".tmp")
     assert not tmp.exists(), f"tmp file leaked after failed write: {tmp}"
 print("atomic-write cleanup on mid-write exception PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# Z (Class F): encode_claude_project must match Claude's actual lookup
+# convention. Reverse-engineered from 64 real Claude sessions in
+# ~/.claude/projects on macOS (2026-05-04 local data): empirical fit was
+# 63/64 with the rule "realpath then replace [^A-Za-z0-9-] with -".
+# Pre-fix the encoder did "/" → "-" only; symlinked paths (/tmp →
+# /private/tmp) wrote under -tmp-foo while claude --resume looked under
+# -private-tmp-foo, leaving converted sessions invisible.
+# ---------------------------------------------------------------------------
+python3 - <<EOF
+import sys, os, re
+sys.path.insert(0, "$REPO_ROOT/lib")
+import session_convert as sc
+
+# Underscores → dashes (real session example: clone_dir → clone-dir).
+assert sc.encode_claude_project("/Users/test/clone_dir") == "-Users-test-clone-dir", \
+    "underscore not replaced"
+# Dots → dashes (real session example: ~/.claude → -Users-spson--claude).
+assert sc.encode_claude_project("/Users/test/.claude") == "-Users-test--claude", \
+    "dot not replaced"
+# Spaces → dashes (real session example: Application Support).
+assert sc.encode_claude_project("/Library/Application Support/x") == "-Library-Application-Support-x", \
+    "space not replaced"
+# realpath is applied: on macOS /tmp is a symlink to /private/tmp; the
+# encoder must follow it so the result matches what claude --resume scans.
+if os.path.realpath("/tmp") == "/private/tmp":
+    assert sc.encode_claude_project("/tmp/foo-bar") == "-private-tmp-foo-bar", \
+        "realpath /tmp → /private/tmp not chased"
+print("encode_claude_project matches Claude's lookup convention PASSED")
 EOF
 
 echo "all converter sandbox tests passed"
