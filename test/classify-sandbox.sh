@@ -290,12 +290,18 @@ assert_grep "^home=$SANDBOX/home-second args=e resume$" "$SANDBOX/codex.log"
 # instead of reading `$1` under nounset.
 classify_known_probe="$SANDBOX/classify-known-probe"
 awk '
+  BEGIN { found = 0 }
   $0 == "main \"$@\"" {
+    found += 1
     print "classify_known_command \"$@\""
     next
   }
   { print }
-' "$REPO_ROOT/second-codex" > "$classify_known_probe"
+  END { if (found != 1) exit 42 }
+' "$REPO_ROOT/second-codex" > "$classify_known_probe" || {
+  echo "FAIL classify_known_command probe could not replace exactly one entrypoint" >&2
+  exit 1
+}
 chmod 700 "$classify_known_probe"
 set +e
 "$WRAPPER_BASH" "$classify_known_probe" >"$SANDBOX/classify-known-no-args.out" 2>&1
@@ -313,14 +319,20 @@ assert_grep "^second$" "$SANDBOX/classify-known-no-args.out"
 # smoke test so future parser refactors retain both entry points.
 resume_helper_probe="$SANDBOX/resume-helper-probe"
 awk '
+  BEGIN { found = 0 }
   $0 == "main \"$@\"" {
+    found += 1
     print "find_session_id_after_resume_command \"$@\" && exit 20"
     print "find_resume_session_arg \"$@\" && exit 21"
     print "exit 0"
     next
   }
   { print }
-' "$REPO_ROOT/second-codex" > "$resume_helper_probe"
+  END { if (found != 1) exit 42 }
+' "$REPO_ROOT/second-codex" > "$resume_helper_probe" || {
+  echo "FAIL resume helper probe could not replace exactly one entrypoint" >&2
+  exit 1
+}
 chmod 700 "$resume_helper_probe"
 set +e
 "$WRAPPER_BASH" "$resume_helper_probe" >"$SANDBOX/resume-helper-no-args.out" 2>&1
