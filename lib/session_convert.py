@@ -180,6 +180,48 @@ _CLAUDE_RECORD_DOCUMENTED_DROP: frozenset[str] = frozenset({
     "summary", "custom-title", "agent-name",
 })
 
+# Codex turn_context.approval_policy enum. Empirical scan of 4870 local
+# rollouts shows real-world values are "on-request" and "never"; the full
+# enum from Codex's source includes "untrusted" and "on-failure" which we
+# accept as well so users can opt into stricter Codex behavior on resume.
+_VALID_CODEX_APPROVAL_POLICIES: frozenset[str] = frozenset({
+    "untrusted", "on-request", "on-failure", "never",
+})
+# Codex turn_context.sandbox_policy.type enum (Codex uses `type` as the
+# tagged-union discriminator, NOT `mode` — pre-#6 converter wrote `mode`,
+# which Codex resume effectively ignores). Empirical scan: "workspace-write"
+# is the most common value, with "danger-full-access" and "read-only" also
+# observed. Conservative default is "read-only" so a converted session
+# never silently escalates filesystem access on resume.
+_VALID_CODEX_SANDBOX_TYPES: frozenset[str] = frozenset({
+    "read-only", "workspace-write", "danger-full-access",
+})
+_DEFAULT_CODEX_APPROVAL_POLICY: str = "on-request"
+_DEFAULT_CODEX_SANDBOX_TYPE: str = "read-only"
+
+
+def _build_codex_sandbox_policy(sandbox_type: str, cwd: str) -> dict[str, Any]:
+    """Build the sandbox_policy dict Codex's resume parser expects.
+
+    Codex represents sandbox_policy as a tagged union keyed on `type`. For
+    `read-only` and `danger-full-access` the only field is `type`. For
+    `workspace-write` Codex also stores `writable_roots`, `network_access`,
+    `exclude_tmpdir_env_var`, `exclude_slash_tmp`. We populate those with
+    conservative defaults (cwd as the only writable root, no network, no
+    tmp exclusions) so a `workspace-write` resume is bounded; users who
+    need other settings can edit the produced rollout or wait on a future
+    iteration that exposes them as separate flags.
+    """
+    if sandbox_type == "workspace-write":
+        return {
+            "type": "workspace-write",
+            "writable_roots": [cwd],
+            "network_access": False,
+            "exclude_tmpdir_env_var": False,
+            "exclude_slash_tmp": False,
+        }
+    return {"type": sandbox_type}
+
 
 def _warn_unknown(category: str, kind: str, seen: set[str]) -> None:
     """Emit a single stderr warning per unknown (category, kind) pair.
@@ -652,12 +694,17 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 continue
             tool_use_id = call_id_to_tool_id.get(call_id)
             if tool_use_id is None:
-                # Orphan output (no matching call). Fold into a user text record.
+                # Orphan output (no matching call). Wrap in `[Orphan tool result: ...]`
+                # to mark broken linkage explicitly, parity with the orphan
+                # branches in `custom_tool_call_output` and the README's
+                # documented contract for orphan handling.
                 if not output:
                     continue
                 out.append(make_record(
                     "user",
-                    {"role": "user", "content": [{"type": "text", "text": str(output)}]},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": f"[Orphan tool result: {output}]"}
+                    ]},
                 ))
                 continue
             out.append(make_record(
@@ -797,10 +844,34 @@ def _detect_codex_cli_version() -> str:
     return "0.0.0-translated"
 
 
-def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
-    """Convert a Claude session to a Codex rollout. Returns (output path, new uuid)."""
+def claude_to_codex(
+    src: Path,
+    target_cwd: str | None = None,
+    codex_approval_policy: str = _DEFAULT_CODEX_APPROVAL_POLICY,
+    codex_sandbox_policy: str = _DEFAULT_CODEX_SANDBOX_TYPE,
+) -> tuple[Path, str]:
+    """Convert a Claude session to a Codex rollout. Returns (output path, new uuid).
+
+    `codex_approval_policy` and `codex_sandbox_policy` populate the
+    converted session's `turn_context` so `codex resume` honors the
+    intended permission posture instead of silently auto-approving every
+    command (the pre-#6 default of `"never"` + a wrong-schema sandbox
+    policy effectively dropped any safety gate). Both axes default to the
+    conservative end of Codex's enum (`on-request` + `read-only`); users
+    who need looser semantics opt in explicitly.
+    """
     if target_cwd is not None and not target_cwd.strip():
         raise ValueError("--target-cwd must not be empty or whitespace-only")
+    if codex_approval_policy not in _VALID_CODEX_APPROVAL_POLICIES:
+        raise ValueError(
+            f"--codex-approval-policy must be one of "
+            f"{sorted(_VALID_CODEX_APPROVAL_POLICIES)}; got {codex_approval_policy!r}"
+        )
+    if codex_sandbox_policy not in _VALID_CODEX_SANDBOX_TYPES:
+        raise ValueError(
+            f"--codex-sandbox-policy must be one of "
+            f"{sorted(_VALID_CODEX_SANDBOX_TYPES)}; got {codex_sandbox_policy!r}"
+        )
     records = read_jsonl(src)
     if not records:
         raise ValueError(f"Source is empty: {src}")
@@ -849,8 +920,8 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         "type": "turn_context",
         "payload": {
             "cwd": cwd,
-            "approval_policy": "never",
-            "sandbox_policy": {"mode": "read-only"},
+            "approval_policy": codex_approval_policy,
+            "sandbox_policy": _build_codex_sandbox_policy(codex_sandbox_policy, cwd),
             "model": "gpt-5.5",
             "effort": "none",
             "summary": "none",
@@ -1058,6 +1129,24 @@ def main(argv: list[str] | None = None) -> int:
     p_cc2 = sub.add_parser("claude-to-codex", help="Convert a Claude session into a Codex rollout")
     p_cc2.add_argument("uuid", help="Claude session UUID (full or partial)")
     p_cc2.add_argument("--target-cwd", help="Override cwd for the converted session")
+    p_cc2.add_argument(
+        "--codex-approval-policy",
+        choices=sorted(_VALID_CODEX_APPROVAL_POLICIES),
+        default=_DEFAULT_CODEX_APPROVAL_POLICY,
+        help=(
+            f"Codex approval_policy emitted into the converted session's "
+            f"turn_context (default: {_DEFAULT_CODEX_APPROVAL_POLICY})"
+        ),
+    )
+    p_cc2.add_argument(
+        "--codex-sandbox-policy",
+        choices=sorted(_VALID_CODEX_SANDBOX_TYPES),
+        default=_DEFAULT_CODEX_SANDBOX_TYPE,
+        help=(
+            f"Codex sandbox_policy.type emitted into the converted "
+            f"session's turn_context (default: {_DEFAULT_CODEX_SANDBOX_TYPE})"
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -1091,7 +1180,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "claude-to-codex":
         src = find_claude_session(args.uuid)
-        target, new_uuid = claude_to_codex(src, target_cwd=args.target_cwd)
+        target, new_uuid = claude_to_codex(
+            src,
+            target_cwd=args.target_cwd,
+            codex_approval_policy=args.codex_approval_policy,
+            codex_sandbox_policy=args.codex_sandbox_policy,
+        )
         emit(f"converted: {src} -> {target}")
         emit(f"new session UUID: {new_uuid}")
         emit(f"resume with: codex resume {new_uuid}")

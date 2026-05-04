@@ -99,6 +99,16 @@ claude --resume <new_uuid>
 # Started in Claude Code, want to continue in Codex:
 second-codex handoff-from-claude <claude_session_id>
 codex resume <new_uuid>
+
+# `handoff-from-claude` accepts two optional Codex policy flags. Both are
+# enums validated against Codex's actual schema; defaults are conservative
+# (no silent permission escalation when crossing the vendor boundary):
+#   --codex-approval-policy {untrusted|on-request|on-failure|never}   default: on-request
+#   --codex-sandbox-policy  {read-only|workspace-write|danger-full-access}   default: read-only
+# Example: convert a Claude session and resume it in Codex with no
+# approval prompts and full filesystem access (matches Codex "Yolo" /
+# full-access preset):
+second-codex handoff-from-claude <id> --codex-approval-policy never --codex-sandbox-policy danger-full-access
 ```
 
 What is preserved: text turns, tool calls and results (with linkage for the mapped pair), `cwd` context, source per-record timestamps.
