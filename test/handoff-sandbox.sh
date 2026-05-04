@@ -88,6 +88,8 @@ grep -Fxq "resume_primary_interactive=codex resume $SESSION_ID" "$SANDBOX/handof
 grep -Fxq "resume_primary_exec=codex exec resume $SESSION_ID" "$SANDBOX/handoff.out"
 grep -Fxq "resume_second_interactive=second-codex resume $SESSION_ID" "$SANDBOX/handoff.out"
 cmp -s "$SANDBOX/home-second/sessions/$SESSION_REL" "$SANDBOX/home-a/sessions/$SESSION_REL"
+SESSION_MODE="$(stat -f '%Lp' "$SANDBOX/home-a/sessions/$SESSION_REL" 2>/dev/null || stat -c '%a' "$SANDBOX/home-a/sessions/$SESSION_REL")"
+test "$SESSION_MODE" = "600"
 grep -Fq "\"session_id\":\"$SESSION_ID\"" "$SANDBOX/home-a/history.jsonl"
 test ! -e "$SANDBOX/home-a/auth.json"
 

@@ -356,9 +356,54 @@ classify_known_command() {
   fi
 
   if token_is_setup_command "$command"; then
-    for token in "$@"; do
-      token_is_auth_mutation "$token" && { echo block; return; }
+    local subcommand="" marketplace_subcommand="" after_separator=0
+    local setup_args=("$@")
+    local j=0
+    while (( j < ${#setup_args[@]} )); do
+      token="${setup_args[$j]}"
+      if [[ "$token" == "--" ]]; then
+        if [[ -z "$subcommand" ]]; then
+          after_separator=0
+        else
+          after_separator=1
+        fi
+        j=$((j + 1))
+        continue
+      fi
+      if (( after_separator )); then
+        j=$((j + 1))
+        continue
+      fi
       option_is_auth_mutation "$token" && { echo block; return; }
+      if [[ "$token" == --*=* ]]; then
+        j=$((j + 1))
+        continue
+      fi
+      if [[ "$token" == -* ]]; then
+        if option_takes_value "$token" && (( j + 1 < ${#setup_args[@]} )); then
+          j=$((j + 2))
+        else
+          j=$((j + 1))
+        fi
+        continue
+      fi
+
+      if [[ -z "$subcommand" ]]; then
+        subcommand="$token"
+        token_is_auth_mutation "$token" && { echo block; return; }
+        j=$((j + 1))
+        continue
+      fi
+
+      case "$command:$subcommand" in
+        plugin:marketplace|plugins:marketplace|skill:marketplace|skills:marketplace|app:marketplace|apps:marketplace)
+          if [[ -z "$marketplace_subcommand" ]]; then
+            marketplace_subcommand="$token"
+            token_is_auth_mutation "$token" && { echo block; return; }
+          fi
+          ;;
+      esac
+      j=$((j + 1))
     done
     echo reroute
     return
@@ -369,7 +414,11 @@ classify_known_command() {
 
 classify_command() {
   local args=("$@")
-  local i=0 saw_ambiguous_option=0 arg
+  local i=0 saw_ambiguous_option=0 scan_after_ambiguous_option=0 arg
+  for arg in "${args[@]}"; do
+    [[ "$arg" == "--" ]] && break
+    option_is_auth_mutation "$arg" && { echo block; return; }
+  done
   while (( i < ${#args[@]} )); do
     arg="${args[$i]}"
     case "$arg" in
@@ -389,15 +438,21 @@ classify_command() {
           i=$((i + 2))
         else
           saw_ambiguous_option=1
+          scan_after_ambiguous_option=1
           i=$((i + 1))
         fi
         ;;
       *)
+        if (( saw_ambiguous_option )); then
+          saw_ambiguous_option=0
+          i=$((i + 1))
+          continue
+        fi
         if token_is_auth_mutation "$arg" || token_is_setup_command "$arg" || token_is_runtime_mutation "$arg" || [[ "$arg" == exec || "$arg" == e || "$arg" == resume || "$arg" == chat ]]; then
           classify_known_command "$arg" "${args[@]:$((i + 1))}"
           return
         fi
-        if (( saw_ambiguous_option )); then
+        if (( scan_after_ambiguous_option )); then
           i=$((i + 1))
           continue
         fi
@@ -847,7 +902,7 @@ copy_session_between_homes() {
       return 73
     fi
   else
-    cp "$source_session_file" "$target_session_file"
+    (umask 077; cp "$source_session_file" "$target_session_file")
     chmod 600 "$target_session_file"
   fi
   printf '%s\n' "$target_session_file"
@@ -1370,13 +1425,14 @@ main() {
 
   load_manifest
   guard_home_roots
-  ensure_shared_paths
-  ensure_shim
 
   if [[ "${1:-}" == "doctor" ]]; then
     doctor
     return
   fi
+
+  ensure_shared_paths
+  ensure_shim
 
   local classification
   classification="$(classify_command "$@")"
@@ -1396,12 +1452,18 @@ main() {
   case "$classification" in
     reroute)
       reroute_notice
-      local rc=0
+      local rc=0 sync_rc=0
       CODEX_ACCOUNT_SLOT=primary \
         SECOND_CODEX_ACTIVE_ACCOUNT=primary \
         CODEX_HOME="$A_HOME" \
         "$REAL_CODEX" "$@" || rc=$?
-      sync_projection
+      sync_projection || sync_rc=$?
+      if (( rc != 0 )); then
+        return "$rc"
+      fi
+      if (( sync_rc != 0 )); then
+        return "$sync_rc"
+      fi
       return "$rc"
       ;;
     second)

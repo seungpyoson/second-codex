@@ -25,6 +25,20 @@ SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-default.out"
 grep -q "primary_auth=corrupt auth file" "$SANDBOX/doctor-default.out"
 
+rm "$SANDBOX/home-second/memories" "$SANDBOX/home-second/memories_extensions"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-missing-links.out" 2>&1; then
+  echo "FAIL doctor silently repaired missing shared-memory symlinks"
+  exit 1
+fi
+grep -q "FAIL memories is not a symlink to primary" "$SANDBOX/doctor-missing-links.out"
+grep -q "FAIL memories_extensions is not a symlink to primary" "$SANDBOX/doctor-missing-links.out"
+ln -s "$SANDBOX/home-a/memories" "$SANDBOX/home-second/memories"
+ln -s "$SANDBOX/home-a/memories_extensions" "$SANDBOX/home-second/memories_extensions"
+
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \

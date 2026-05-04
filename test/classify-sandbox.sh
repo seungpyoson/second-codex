@@ -81,6 +81,7 @@ assert_grep "refused this account/auth command" "$SANDBOX/login.out"
 assert_missing_file "$SANDBOX/codex.log"
 
 assert_blocked unknown-flag-login --unknown-future-flag value login
+assert_blocked unknown-flag-exec-login --unknown-future-flag exec login
 assert_blocked mcp-profile-oauth mcp -p default oauth
 assert_blocked mcp-separator-oauth mcp -- oauth
 assert_blocked plugin-marketplace-login plugin marketplace login
@@ -94,6 +95,9 @@ assert_blocked flag-oauth --oauth-redirect=http://example.test chat
 assert_blocked flag-signout --signout chat
 assert_blocked flag-reconnect --reconnect chat
 assert_blocked flag-sign-out --sign-out chat
+assert_blocked fork-flag-login fork --login=foo 00000000-0000-7000-8000-000000000099
+assert_blocked review-flag-signin review --signin do a review
+assert_blocked apply-flag-auth-token apply --auth-token=xyz patch.diff
 assert_second separator-login -- login
 assert_second separator-logout -- logout
 assert_second separator-mcp-oauth -- mcp oauth
@@ -158,10 +162,14 @@ assert_grep "rerouting environment/config change" "$SANDBOX/features.out"
 assert_grep "home=$SANDBOX/home-a args=--enable goals features enable another-feature" "$SANDBOX/codex.log"
 
 assert_rerouted mcp-config mcp config
+assert_rerouted mcp-add-command-login mcp add foo -- login
+assert_rerouted mcp-add-name-oauth mcp add oauth -- /usr/bin/true
 assert_rerouted plugin-marketplace-add plugin marketplace add sample
+assert_rerouted plugin-marketplace-add-login plugin marketplace add login
 assert_rerouted plugin-marketplace-upgrade plugin marketplace upgrade sample
 assert_rerouted skill-install skill install sample
 assert_rerouted features-enable features enable direct-feature
+assert_rerouted features-enable-login features enable login
 assert_rerouted trust trust
 
 if run_wrapper plugin login >"$SANDBOX/plugin-login.out" 2>&1; then
@@ -170,6 +178,8 @@ if run_wrapper plugin login >"$SANDBOX/plugin-login.out" 2>&1; then
 fi
 assert_grep "refused this account/auth command" "$SANDBOX/plugin-login.out"
 assert_blocked mcp-oauth mcp oauth
+assert_blocked mcp-login mcp login
+assert_blocked mcp-logout mcp logout
 assert_blocked plugin-auth plugin auth
 assert_blocked skill-login skill login
 assert_blocked app-oauth app oauth

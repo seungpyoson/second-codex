@@ -20,7 +20,7 @@ __second_codex_should_print_session_hint() {
       exec|resume)
         return 0
         ;;
-      _session-hint|doctor|handoff|session-id|login|logout|mcp|features|plugin|plugins|skill|skills|app|apps|config|configure|trust|untrust|update)
+      _session-hint|doctor|handoff|session-id|login|logout|mcp|features|plugin|plugins|skill|skills|app|apps|config|configure|trust|untrust|update|upgrade)
         return 1
         ;;
     esac

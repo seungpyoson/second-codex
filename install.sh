@@ -50,11 +50,7 @@ ensure_source_line() {
 }
 
 ZSHRC="${ZSHRC:-$HOME/.zshrc}"
-ZSHENV="${ZSHENV:-$HOME/.zshenv}"
-ensure_source_line "$ZSHENV"
-if [[ "$ZSHRC" != "$ZSHENV" ]]; then
-  ensure_source_line "$ZSHRC"
-fi
+ensure_source_line "$ZSHRC"
 
 echo "Installed second-codex to $INSTALL_ROOT"
 echo "New zsh sessions can now use second-codex from any directory."

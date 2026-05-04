@@ -32,6 +32,10 @@ if [[ "${1:-}" == "mcp" && "${2:-}" == "add" ]]; then
   if [[ "$3" == "sandbox-reroute-fail" ]]; then
     exit 42
   fi
+  if [[ "$3" == "sandbox-reroute-sync-fail" ]]; then
+    touch "${CODEX_HOME:?missing CODEX_HOME}/unclassified-runtime"
+    exit 42
+  fi
   exit 0
 fi
 echo "unexpected mock codex invocation: $*" >&2
@@ -67,4 +71,22 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 fi
 grep -q "sandbox-reroute-fail" "$SANDBOX/home-a/config.toml"
 grep -q "sandbox-reroute-fail" "$SANDBOX/home-second/config.toml"
+
+SYNC_FAIL_OUT="$SANDBOX/reroute-sync-fail.out"
+set +e
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_EXPECT_PRIMARY="$SANDBOX/home-a" \
+  "$REPO_ROOT/second-codex" mcp add sandbox-reroute-sync-fail -- /usr/bin/false >"$SYNC_FAIL_OUT" 2>&1
+SYNC_FAIL_RC=$?
+set -e
+if [[ "$SYNC_FAIL_RC" -ne 42 ]]; then
+  cat "$SYNC_FAIL_OUT"
+  echo "FAIL reroute sync failure returned $SYNC_FAIL_RC instead of primary command rc 42"
+  exit 1
+fi
+grep -q "unknown top-level entries" "$SYNC_FAIL_OUT"
 echo "PASS reroute sandbox"
