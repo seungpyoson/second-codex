@@ -14,7 +14,7 @@ MOCK_CODEX="$SANDBOX/mock-codex"
 cat > "$MOCK_CODEX" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'home=%s args=%s\n' "${CODEX_HOME:?missing CODEX_HOME}" "$*" > "${SECOND_CODEX_TEST_LOG:?missing SECOND_CODEX_TEST_LOG}"
+printf 'home=%s account=%s active=%s args=%s\n' "${CODEX_HOME:?missing CODEX_HOME}" "${CODEX_ACCOUNT_SLOT:-missing}" "${SECOND_CODEX_ACTIVE_ACCOUNT:-missing}" "$*" > "${SECOND_CODEX_TEST_LOG:?missing SECOND_CODEX_TEST_LOG}"
 SH
 chmod 700 "$MOCK_CODEX"
 
@@ -30,7 +30,7 @@ test -L "$SANDBOX/home-second/memories"
 test -L "$SANDBOX/home-second/memories_extensions"
 test "$(readlink "$SANDBOX/home-second/memories")" = "$SANDBOX/home-a/memories"
 test "$(readlink "$SANDBOX/home-second/memories_extensions")" = "$SANDBOX/home-a/memories_extensions"
-grep -Fxq "home=$SANDBOX/home-second args=exec smoke" "$SANDBOX/codex.log"
+grep -Fxq "home=$SANDBOX/home-second account=second active=second args=exec smoke" "$SANDBOX/codex.log"
 
 rm "$SANDBOX/home-second/memories"
 mkdir "$SANDBOX/home-second/memories"

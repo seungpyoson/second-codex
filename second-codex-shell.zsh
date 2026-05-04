@@ -32,7 +32,7 @@ __second_codex_session_hint() {
 }
 
 codex() {
-  command codex "$@"
+  CODEX_ACCOUNT_SLOT=primary SECOND_CODEX_ACTIVE_ACCOUNT=primary command codex "$@"
   local rc=$?
   if [[ -o interactive ]] && (( rc == 0 )) && __second_codex_should_print_session_hint "$@"; then
     __second_codex_session_hint primary

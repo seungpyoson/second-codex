@@ -32,13 +32,13 @@ grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/codex" <<'SH'
 #!/usr/bin/env bash
-printf 'primary-codex:%s\n' "$*" >> "${SECOND_CODEX_INSTALL_HELPER_LOG:?missing log}"
+printf 'primary-codex:%s account=%s active=%s\n' "$*" "${CODEX_ACCOUNT_SLOT:-missing}" "${SECOND_CODEX_ACTIVE_ACCOUNT:-missing}" >> "${SECOND_CODEX_INSTALL_HELPER_LOG:?missing log}"
 SH
 chmod 700 "$SANDBOX/bin/codex"
 PATH="$SANDBOX/bin:$PATH" \
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -c 'source "$1"; codex login status' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
-grep -Fxq "primary-codex:login status" "$SANDBOX/helper.log"
+grep -Fxq "primary-codex:login status account=primary active=primary" "$SANDBOX/helper.log"
 
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -fic 'source "$1"; second-codex smoke-test' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
@@ -76,7 +76,7 @@ HOME="$SANDBOX/home" \
 ZDOTDIR="$SANDBOX/home" \
 PATH="$SANDBOX/bin:$PATH" \
   zsh -c 'codex exec hello'
-grep -Fxq "primary-codex:exec hello" "$SANDBOX/zshenv.log"
+grep -Fxq "primary-codex:exec hello account=primary active=primary" "$SANDBOX/zshenv.log"
 if grep -Fq "installed-helper:_session-hint" "$SANDBOX/zshenv.log"; then
   echo "FAIL non-interactive zsh command printed a session hint"
   exit 1

@@ -54,6 +54,17 @@ Resume directions:
 - Primary to second: `second-codex resume <session_id>`; the wrapper imports the selected primary transcript into second runtime first.
 - Second to primary: `second-codex handoff <session_id> && codex resume <session_id>`
 
+Account/usage checks:
+
+```bash
+echo "$CODEX_ACCOUNT_SLOT"
+second-codex account
+second-codex usage --second
+second-codex usage --primary
+```
+
+`CODEX_ACCOUNT_SLOT` is set to `primary` for helper-launched `codex` sessions and `second` for `second-codex` sessions. `second-codex usage` reads the latest stored Codex `token_count` snapshot from the selected account's session transcript; it reports the most recent stored snapshot, not a live server query.
+
 ## Session Handoff
 
 If the second ChatGPT subscription hits a usage limit, hand off the current second-account session to primary Codex:

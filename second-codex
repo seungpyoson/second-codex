@@ -433,6 +433,134 @@ require_runtime_dependencies() {
   fi
 }
 
+infer_account_slot() {
+  if [[ -n "${CODEX_ACCOUNT_SLOT:-}" ]]; then
+    printf '%s\n' "$CODEX_ACCOUNT_SLOT"
+    return
+  fi
+  case "${CODEX_HOME:-}" in
+    "$B_HOME")
+      printf 'second\n'
+      ;;
+    "$A_HOME")
+      printf 'primary\n'
+      ;;
+    *)
+      printf 'unknown\n'
+      ;;
+  esac
+}
+
+home_for_account_slot() {
+  case "$1" in
+    primary)
+      printf '%s\n' "$A_HOME"
+      ;;
+    second)
+      printf '%s\n' "$B_HOME"
+      ;;
+    *)
+      printf '%s\n' "${CODEX_HOME:-}"
+      ;;
+  esac
+}
+
+account_status() {
+  local slot
+  slot="$(infer_account_slot)"
+  local home
+  home="${CODEX_HOME:-$(home_for_account_slot "$slot")}"
+  printf 'account_slot=%s\n' "$slot"
+  printf 'codex_home=%s\n' "${home:-unset}"
+}
+
+usage_status() {
+  local slot
+  if (( $# > 1 )); then
+    echo "usage: second-codex usage [--primary|--second]" >&2
+    return 64
+  fi
+  case "${1:-}" in
+    --primary)
+      slot="primary"
+      ;;
+    --second|"")
+      if [[ "${1:-}" == "--second" ]]; then
+        slot="second"
+      else
+        slot="$(infer_account_slot)"
+        [[ "$slot" == "unknown" ]] && slot="second"
+      fi
+      ;;
+    *)
+      echo "usage: second-codex usage [--primary|--second]" >&2
+      return 64
+      ;;
+  esac
+
+  local home session_id session_file
+  guard_home_roots
+  home="$(home_for_account_slot "$slot")"
+  [[ -n "$home" ]] || {
+    echo "second-codex usage could not infer CODEX_HOME" >&2
+    return 67
+  }
+  session_id="$(latest_session_id_for_home "$home")" || return $?
+  session_file="$(find_session_file_for_home "$home" "$session_id" "$slot account")" || return $?
+
+  printf 'account_slot=%s\n' "$slot"
+  printf 'codex_home=%s\n' "$home"
+  printf 'session_id=%s\n' "$session_id"
+  if [[ "${SECOND_CODEX_TEST_DISABLE_PYTHON3:-0}" == "1" ]] || ! command -v python3 >/dev/null 2>&1; then
+    echo "second-codex usage requires python3 to read Codex usage snapshots" >&2
+    return 67
+  fi
+  python3 - "$session_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+snapshot = None
+with Path(sys.argv[1]).open("r", encoding="utf-8", errors="replace") as fh:
+    for line in fh:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        payload = item.get("payload") or {}
+        if item.get("type") == "event_msg" and payload.get("type") == "token_count":
+            snapshot = payload
+
+if snapshot is None:
+    print("usage_snapshot=missing")
+    raise SystemExit(0)
+
+info = snapshot.get("info") or {}
+total = info.get("total_token_usage") or {}
+last = info.get("last_token_usage") or {}
+limits = snapshot.get("rate_limits") or {}
+
+def emit(name, value):
+    if value is not None:
+        print(f"{name}={value}")
+
+emit("total_tokens", total.get("total_tokens"))
+emit("input_tokens", total.get("input_tokens"))
+emit("cached_input_tokens", total.get("cached_input_tokens"))
+emit("output_tokens", total.get("output_tokens"))
+emit("reasoning_output_tokens", total.get("reasoning_output_tokens"))
+emit("last_total_tokens", last.get("total_tokens"))
+emit("context_window", info.get("model_context_window"))
+for label in ("primary", "secondary"):
+    limit = limits.get(label) or {}
+    emit(f"{label}_used_percent", limit.get("used_percent"))
+    emit(f"{label}_window_minutes", limit.get("window_minutes"))
+    emit(f"{label}_resets_at", limit.get("resets_at"))
+emit("plan_type", limits.get("plan_type"))
+emit("rate_limit_reached_type", limits.get("rate_limit_reached_type"))
+PY
+}
+
 latest_second_session_id() {
   latest_session_id_for_home "$B_HOME"
 }
@@ -1121,6 +1249,15 @@ doctor() {
 
 main() {
   case "${1:-}" in
+    account)
+      account_status
+      return
+      ;;
+    usage)
+      shift
+      usage_status "$@"
+      return
+      ;;
     _session-hint)
       shift
       guard_home_roots
@@ -1191,7 +1328,10 @@ main() {
   case "$classification" in
     reroute)
       reroute_notice
-      CODEX_HOME="$A_HOME" "$REAL_CODEX" "$@"
+      CODEX_ACCOUNT_SLOT=primary \
+        SECOND_CODEX_ACTIVE_ACCOUNT=primary \
+        CODEX_HOME="$A_HOME" \
+        "$REAL_CODEX" "$@"
       sync_projection
       ;;
     second)
@@ -1199,6 +1339,8 @@ main() {
         SECOND_CODEX_SWITCH_REAL_CODEX="$REAL_CODEX" \
         PATH="$BIN_DIR:$PATH" \
         CODEX_HOME="$B_HOME" \
+        CODEX_ACCOUNT_SLOT=second \
+        SECOND_CODEX_ACTIVE_ACCOUNT=second \
         "$REAL_CODEX" "$@"
       ;;
     *)

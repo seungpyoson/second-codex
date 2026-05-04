@@ -24,6 +24,10 @@ if [[ "${1:-}" == "mcp" && "${2:-}" == "add" ]]; then
     echo "mock codex expected primary CODEX_HOME, got $CODEX_HOME" >&2
     exit 65
   fi
+  if [[ "${CODEX_ACCOUNT_SLOT:-missing}" != "primary" || "${SECOND_CODEX_ACTIVE_ACCOUNT:-missing}" != "primary" ]]; then
+    echo "mock codex expected primary account marker, got CODEX_ACCOUNT_SLOT=${CODEX_ACCOUNT_SLOT:-missing} SECOND_CODEX_ACTIVE_ACCOUNT=${SECOND_CODEX_ACTIVE_ACCOUNT:-missing}" >&2
+    exit 65
+  fi
   printf '\n[mcp_servers.%s]\ncommand = "%s"\n' "$3" "$5" >> "${CODEX_HOME:?missing CODEX_HOME}/config.toml"
   exit 0
 fi
