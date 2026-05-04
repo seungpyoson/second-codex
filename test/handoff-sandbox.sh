@@ -580,6 +580,40 @@ SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/exec-alias-resume.out"
 cmp -s "$SANDBOX/prompt-home-a/sessions/$EXEC_ALIAS_RESUME_REL" "$SANDBOX/prompt-home-second/sessions/$EXEC_ALIAS_RESUME_REL"
 
+EXEC_JSON_RESUME_SESSION_ID="00000000-0000-7000-8000-000000000025"
+EXEC_JSON_RESUME_REL="2026/05/03/rollout-2026-05-03T19-26-47-$EXEC_JSON_RESUME_SESSION_ID.jsonl"
+cat >> "$SANDBOX/prompt-home-a/history.jsonl" <<EOF
+{"session_id":"$EXEC_JSON_RESUME_SESSION_ID","ts":1760000025,"text":"exec json resume primary work"}
+EOF
+cat > "$SANDBOX/prompt-home-a/sessions/$EXEC_JSON_RESUME_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$EXEC_JSON_RESUME_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/prompt-home-a" \
+SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
+"$REPO_ROOT/second-codex" exec resume --json "$EXEC_JSON_RESUME_SESSION_ID" >"$SANDBOX/exec-json-resume.out" 2>&1
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/exec-json-resume.out"
+cmp -s "$SANDBOX/prompt-home-a/sessions/$EXEC_JSON_RESUME_REL" "$SANDBOX/prompt-home-second/sessions/$EXEC_JSON_RESUME_REL"
+
+EXEC_OUTPUT_RESUME_SESSION_ID="00000000-0000-7000-8000-000000000026"
+EXEC_OUTPUT_RESUME_REL="2026/05/03/rollout-2026-05-03T19-27-47-$EXEC_OUTPUT_RESUME_SESSION_ID.jsonl"
+cat >> "$SANDBOX/prompt-home-a/history.jsonl" <<EOF
+{"session_id":"$EXEC_OUTPUT_RESUME_SESSION_ID","ts":1760000026,"text":"exec output resume primary work"}
+EOF
+cat > "$SANDBOX/prompt-home-a/sessions/$EXEC_OUTPUT_RESUME_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$EXEC_OUTPUT_RESUME_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/prompt-home-a" \
+SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
+"$REPO_ROOT/second-codex" exec resume -o "$SANDBOX/last-message.txt" "$EXEC_OUTPUT_RESUME_SESSION_ID" >"$SANDBOX/exec-output-resume.out" 2>&1
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/exec-output-resume.out"
+cmp -s "$SANDBOX/prompt-home-a/sessions/$EXEC_OUTPUT_RESUME_REL" "$SANDBOX/prompt-home-second/sessions/$EXEC_OUTPUT_RESUME_REL"
+
 FORK_SESSION_ID="00000000-0000-7000-8000-000000000023"
 FORK_REL="2026/05/03/rollout-2026-05-03T19-24-47-$FORK_SESSION_ID.jsonl"
 cat >> "$SANDBOX/prompt-home-a/history.jsonl" <<EOF

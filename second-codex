@@ -23,7 +23,7 @@ EOF
 
 option_takes_value() {
   case "$1" in
-    -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image)
+    -c|--config|-m|--model|-p|--profile|-s|--sandbox|-C|--cd|-a|--ask-for-approval|--remote|--remote-auth-token-env|--add-dir|--local-provider|--download-url|--enable|--disable|-i|--image|--output-schema|--color|-o|--output-last-message)
       return 0
       ;;
     *)
@@ -34,7 +34,7 @@ option_takes_value() {
 
 option_takes_no_value() {
   case "$1" in
-    --oss|--dangerously-bypass-approvals-and-sandbox|--search|--no-alt-screen|-h|--help|-V|--version)
+    --oss|--dangerously-bypass-approvals-and-sandbox|--search|--no-alt-screen|--skip-git-repo-check|--ephemeral|--ignore-user-config|--ignore-rules|--json|-h|--help|-V|--version)
       return 0
       ;;
     *)
