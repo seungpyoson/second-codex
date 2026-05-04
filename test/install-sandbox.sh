@@ -32,24 +32,17 @@ chmod 700 "$SANDBOX/install \"root/second-codex"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
 grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
+env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh"
 
 : > "$SANDBOX/helper.log"
 mkdir -p "$SANDBOX/shell-snapshots"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
-  zsh -c 'source "$1"; { typeset -f -m "__second_codex_*" codex second-codex; typeset -p SECOND_CODEX_SHELL_HELPER_DIR; } > "$2"' \
+  zsh -c 'source "$1"; typeset -f -m "__second_codex_*" codex second-codex > "$2"' \
     _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/snapshot.zsh"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/snapshot.zsh"
 grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
-
-zsh -c 'source "$1"; typeset -f -m "__second_codex_*" codex second-codex > "$2"' \
-  _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/functions-only.zsh"
-if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/functions-only.zsh" \
-  >"$SANDBOX/functions-only.out" 2>&1; then
-  echo "FAIL function-only shell snapshot unexpectedly resolved helper dir"
-  exit 1
-fi
-grep -Fq "SECOND_CODEX_SHELL_HELPER_DIR is not set" "$SANDBOX/functions-only.out"
 
 if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'cd "$2"; eval "$(cat "$1")"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
   _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$REPO_ROOT"; then
@@ -66,6 +59,12 @@ else
   echo "FAIL stdin-sourced helper exported an invalid helper dir"
   exit 1
 fi
+
+: > "$SANDBOX/helper.log"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; eval "$(cat "$2")"; second-codex login status' \
+    _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/install \"root/second-codex-shell.zsh"
+grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
 
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/codex" <<'SH'
