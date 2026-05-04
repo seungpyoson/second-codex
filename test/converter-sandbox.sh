@@ -1078,4 +1078,36 @@ for inp, want in cases:
 print("_bump_ts_ms edge cases (multi-dot, short fraction, microseconds) PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# CC (review #6): custom_tool_call_output that has no matching custom_tool_call
+# in the source (e.g. the call was abandoned in a turn_aborted) is folded as
+# an "Orphan tool result" rather than a normal companion fold, so a reader of
+# the converted session can tell linkage was broken.
+# ---------------------------------------------------------------------------
+TCC_UUID="00000000-0000-7000-8000-000000000032"
+TCC_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-19-00-$TCC_UUID.jsonl"
+cat > "$TCC_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TCC_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"call abandoned","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_NEVER_SEEN","output":"ORPHAN-OUTPUT-MARKER-PERIWINKLE"}}
+EOF
+
+OUT="$SANDBOX/orphan-ctc.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TCC_UUID" >"$OUT" 2>&1
+TCC_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TCC_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TCC_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TCC_NEW_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "ORPHAN-OUTPUT-MARKER-PERIWINKLE" in joined, f"orphan output content silently dropped; got {joined!r}"
+assert "Orphan tool result" in joined, f"orphan-fold prefix missing; got {joined!r}"
+# Companion fold prefix MUST NOT appear when there's no matching call.
+assert "[Tool result:" not in joined.replace("[Orphan tool result:", ""), f"orphan output mis-classified as companion; got {joined!r}"
+print("orphan custom_tool_call_output flagged as orphan PASSED")
+EOF
+
 echo "all converter sandbox tests passed"

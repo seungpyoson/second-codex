@@ -131,6 +131,13 @@ _CODEX_RESPONSE_ITEM_DOCUMENTED_DROP: frozenset[str] = frozenset({
 _CODEX_EVENT_MSG_HANDLED: frozenset[str] = frozenset({
     "user_message", "task_started", "task_complete", "turn_aborted",
 })
+# `agent_message` is empirically a duplicate of the same-turn
+# response_item.message in 94% of normal sessions (see module docstring),
+# so dropping it avoids duplicating assistant content. The empirical
+# corpus did not include subagent rollouts (the `collab_*` event types
+# below hint that Codex has a sub-agent feature); if a future maintainer
+# adds a handler thinking content is being lost, see scenario W and the
+# docstring's "intentional drop" note before changing behavior.
 _CODEX_EVENT_MSG_DOCUMENTED_DROP: frozenset[str] = frozenset({
     "agent_message", "agent_reasoning",
     "token_count", "exec_command_end", "patch_apply_end",
@@ -644,14 +651,15 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         elif ptype == "custom_tool_call_output":
             call_id = payload.get("call_id", "")
             output = payload.get("output", "")
-            # Companion fold for a custom_tool_call (or orphan if the call
-            # record was filtered upstream — still surface the output so
-            # nothing is silently lost).
-            _ = call_id in custom_tool_call_ids
+            # Companion fold for a custom_tool_call. If the matching call
+            # record was filtered upstream (e.g. abandoned in a turn_aborted)
+            # the output is still surfaced — flagged as orphan so a reader
+            # of the converted session can tell the linkage was broken.
+            prefix = "Tool result" if call_id in custom_tool_call_ids else "Orphan tool result"
             out.append(make_record(
                 "user",
                 {"role": "user", "content": [{"type": "text",
-                                              "text": f"[Tool result: {output}]"}]},
+                                              "text": f"[{prefix}: {output}]"}]},
             ))
         elif ptype in ("web_search_call", "tool_search_call"):
             # No call_id / output linkage in the schema — render the action

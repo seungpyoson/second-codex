@@ -36,20 +36,22 @@ CLAUDE_SRC_UUID="00000000-0000-4000-8000-e2e000000002"
 CODEX_MARKER="E2E-CODEX-SOURCE-PUMPKIN-7711"
 CLAUDE_MARKER="E2E-CLAUDE-SOURCE-CHESTNUT-9933"
 
+# Surgical cleanup: only paths the probe creates. Critically, do NOT
+# wildcard-delete *.jsonl under $ENCODED_DIR — a user pointing PROBE_CWD
+# at a real working directory (e.g. PROBE_CWD=$HOME/Projects/foo) would
+# otherwise lose every other Claude session for that project on cleanup.
+# Each conversion's converted-output path is captured as it runs, below.
+NEW_CLAUDE_PATH=""
+NEW_CODEX_PATH=""
+
 cleanup() {
-    # Remove the synthetic source/converted artifacts so this probe is
-    # idempotent across runs.
     rm -f \
         "$HOME/.codex/sessions/2026/05/04/rollout-2026-05-04T00-00-00-$CODEX_SRC_UUID.jsonl" \
-        "$HOME/.claude/projects/$ENCODED_DIR/$CLAUDE_SRC_UUID.jsonl"
-    # Best-effort: drop any converted output that landed under this probe's
-    # cwd-encoded dirs. The new session UUIDs are random, so just clear the
-    # whole probe dir if it only holds our files.
-    find "$HOME/.codex/sessions/2026/05/04" -type f -name "rollout-*-019df*-*.jsonl" \
-        -mtime -1 -exec grep -l 'second-codex-handoff\|second-codex-e2e' {} \; 2>/dev/null \
-        | xargs -r rm -f 2>/dev/null || true
-    find "$HOME/.claude/projects/$ENCODED_DIR" -type f -name "*.jsonl" 2>/dev/null \
-        | xargs -r rm -f 2>/dev/null || true
+        "$HOME/.claude/projects/$ENCODED_DIR/$CLAUDE_SRC_UUID.jsonl" \
+        ${NEW_CLAUDE_PATH:+"$NEW_CLAUDE_PATH"} \
+        ${NEW_CODEX_PATH:+"$NEW_CODEX_PATH"}
+    # rmdir is best-effort and only succeeds if the dir is empty — exactly
+    # the safety we want: it leaves any unrelated user files in place.
     rmdir "$HOME/.claude/projects/$ENCODED_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -74,7 +76,9 @@ PY
 
 C2C_OUT="$(python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$CODEX_SRC_UUID")"
 NEW_CLAUDE_UUID="$(echo "$C2C_OUT" | awk '/^new session UUID:/ {print $NF}')"
+NEW_CLAUDE_PATH="$(echo "$C2C_OUT" | awk -F'-> ' '/^converted:/ {print $2}')"
 [ -n "$NEW_CLAUDE_UUID" ] || { echo "FAIL: codex-to-claude did not print a new UUID"; exit 1; }
+[ -n "$NEW_CLAUDE_PATH" ] || { echo "FAIL: codex-to-claude did not print a 'converted: ... -> <path>' line"; exit 1; }
 
 cd "$PROBE_CWD"
 CLAUDE_REPLY="$(claude --resume "$NEW_CLAUDE_UUID" --print "What was the marker I asked you to remember? Reply with just the marker." 2>&1 | tr -d '\r' | head -5)"
@@ -107,7 +111,9 @@ PY
 
 CC2_OUT="$(python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$CLAUDE_SRC_UUID")"
 NEW_CODEX_UUID="$(echo "$CC2_OUT" | awk '/^new session UUID:/ {print $NF}')"
+NEW_CODEX_PATH="$(echo "$CC2_OUT" | awk -F'-> ' '/^converted:/ {print $2}')"
 [ -n "$NEW_CODEX_UUID" ] || { echo "FAIL: claude-to-codex did not print a new UUID"; exit 1; }
+[ -n "$NEW_CODEX_PATH" ] || { echo "FAIL: claude-to-codex did not print a 'converted: ... -> <path>' line"; exit 1; }
 
 cd "$PROBE_CWD"
 CODEX_REPLY="$(codex exec --skip-git-repo-check resume "$NEW_CODEX_UUID" "What was the marker I asked you to remember? Reply with just the marker." 2>&1 | tr -d '\r' | tail -10)"
