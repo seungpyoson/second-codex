@@ -20,6 +20,7 @@ set -euo pipefail
 printf 'home=%s args=%s\n' "${CODEX_HOME:?missing CODEX_HOME}" "$*" >> "${SECOND_CODEX_TEST_LOG:?missing SECOND_CODEX_TEST_LOG}"
 SH
 chmod 700 "$MOCK_CODEX"
+WRAPPER_BASH="${SECOND_CODEX_TEST_BASH:-/bin/bash}"
 
 run_wrapper() {
   SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
@@ -28,7 +29,7 @@ run_wrapper() {
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
   SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
   SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
-  "$REPO_ROOT/second-codex" "$@"
+  "$WRAPPER_BASH" "$REPO_ROOT/second-codex" "$@"
 }
 
 assert_grep() {
@@ -247,6 +248,43 @@ if (( resume_no_session_rc != 0 )); then
 fi
 assert_grep "^home=$SANDBOX/home-second args=resume$" "$SANDBOX/codex.log"
 
+# Smoke test: the nested `exec resume` parser arm has its own empty-tail slice
+# before find_session_id_after_resume_command. Pin both command spellings so the
+# top-level resume path is not the only covered slice site.
+: > "$SANDBOX/codex.log"
+exec_resume_no_session_out="$SANDBOX/exec-resume-no-session.out"
+set +e
+run_wrapper exec resume >"$exec_resume_no_session_out" 2>&1
+exec_resume_no_session_rc=$?
+set -e
+if (( exec_resume_no_session_rc != 0 )); then
+  if grep -q "unbound variable" "$exec_resume_no_session_out"; then
+    echo "FAIL second-codex exec resume errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex exec resume exited $exec_resume_no_session_rc" >&2
+  fi
+  cat "$exec_resume_no_session_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=exec resume$" "$SANDBOX/codex.log"
+
+: > "$SANDBOX/codex.log"
+exec_alias_resume_no_session_out="$SANDBOX/e-resume-no-session.out"
+set +e
+run_wrapper e resume >"$exec_alias_resume_no_session_out" 2>&1
+exec_alias_resume_no_session_rc=$?
+set -e
+if (( exec_alias_resume_no_session_rc != 0 )); then
+  if grep -q "unbound variable" "$exec_alias_resume_no_session_out"; then
+    echo "FAIL second-codex e resume errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex e resume exited $exec_alias_resume_no_session_rc" >&2
+  fi
+  cat "$exec_alias_resume_no_session_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=e resume$" "$SANDBOX/codex.log"
+
 # Regression guard: classify_known_command is normally reached with a command
 # token, but a direct no-arg helper call should still fall through cleanly
 # instead of reading `$1` under nounset.
@@ -260,7 +298,7 @@ awk '
 ' "$REPO_ROOT/second-codex" > "$classify_known_probe"
 chmod 700 "$classify_known_probe"
 set +e
-"$classify_known_probe" >"$SANDBOX/classify-known-no-args.out" 2>&1
+"$WRAPPER_BASH" "$classify_known_probe" >"$SANDBOX/classify-known-no-args.out" 2>&1
 classify_known_no_args_rc=$?
 set -e
 if (( classify_known_no_args_rc != 0 )); then
@@ -285,7 +323,7 @@ awk '
 ' "$REPO_ROOT/second-codex" > "$resume_helper_probe"
 chmod 700 "$resume_helper_probe"
 set +e
-"$resume_helper_probe" >"$SANDBOX/resume-helper-no-args.out" 2>&1
+"$WRAPPER_BASH" "$resume_helper_probe" >"$SANDBOX/resume-helper-no-args.out" 2>&1
 resume_helper_no_args_rc=$?
 set -e
 if (( resume_helper_no_args_rc != 0 )); then

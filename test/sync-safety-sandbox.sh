@@ -31,6 +31,12 @@ mkdir -p "$SANDBOX/empty-primary/memories" "$SANDBOX/empty-primary/memories_exte
 ln -s "$SANDBOX/empty-primary/memories" "$SANDBOX/home-second/memories"
 ln -s "$SANDBOX/empty-primary/memories_extensions" "$SANDBOX/home-second/memories_extensions"
 
+if run_wrapper "/" "$SANDBOX/home-second" >"$SANDBOX/root-primary.out" 2>&1; then
+  echo "FAIL root primary CODEX_HOME was not refused"
+  exit 1
+fi
+grep -q "refused root primary CODEX_HOME" "$SANDBOX/root-primary.out"
+
 if run_wrapper "$SANDBOX/empty-primary" "$SANDBOX/home-second" >"$SANDBOX/empty.out" 2>&1; then
   echo "FAIL sparse primary CODEX_HOME was not refused"
   exit 1
@@ -53,6 +59,12 @@ ln -s "$SANDBOX/real-primary" "$SANDBOX/a-symlink"
 ln -s "$SANDBOX/linked-second" "$SANDBOX/b-symlink"
 ln -s "$SANDBOX/real-primary/memories" "$SANDBOX/linked-second/memories"
 ln -s "$SANDBOX/real-primary/memories_extensions" "$SANDBOX/linked-second/memories_extensions"
+
+if run_wrapper "$SANDBOX/real-primary" "/" >"$SANDBOX/root-second.out" 2>&1; then
+  echo "FAIL root second CODEX_HOME was not refused"
+  exit 1
+fi
+grep -q "refused root second CODEX_HOME" "$SANDBOX/root-second.out"
 
 if run_wrapper "$SANDBOX/a-symlink" "$SANDBOX/real-second" >"$SANDBOX/a-symlink.out" 2>&1; then
   echo "FAIL symlinked primary CODEX_HOME was not refused"

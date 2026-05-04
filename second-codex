@@ -5,9 +5,9 @@ ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 A_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 B_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
 BIN_DIR="${SECOND_CODEX_SHIM_DIR:-${TMPDIR:-/tmp}/second-codex-shim-$(id -u)}"
-A_HOME="${A_HOME%/}"
-B_HOME="${B_HOME%/}"
-BIN_DIR="${BIN_DIR%/}"
+while [[ "$A_HOME" == */ && "$A_HOME" != "/" ]]; do A_HOME="${A_HOME%/}"; done
+while [[ "$B_HOME" == */ && "$B_HOME" != "/" ]]; do B_HOME="${B_HOME%/}"; done
+while [[ "$BIN_DIR" == */ && "$BIN_DIR" != "/" ]]; do BIN_DIR="${BIN_DIR%/}"; done
 WRAPPER_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex || true)}"
 
@@ -200,7 +200,13 @@ refuse_symlink_home() {
   local current="" part target
   local -a parts
   [[ "$path" == /* ]] || path="$PWD/$path"
-  path="${path%/}"
+  while [[ "$path" == */ && "$path" != "/" ]]; do
+    path="${path%/}"
+  done
+  if [[ "$path" == "/" ]]; then
+    echo "second-codex refused root $label $noun: $home" >&2
+    return 64
+  fi
   IFS=/ read -r -a parts <<< "${path#/}"
   for part in "${parts[@]}"; do
     [[ -n "$part" ]] || continue
@@ -226,15 +232,15 @@ refuse_same_homes() {
 }
 
 guard_home_roots() {
-  refuse_symlink_home "primary" "$A_HOME"
-  refuse_symlink_home "second" "$B_HOME"
+  refuse_symlink_home "primary" "$A_HOME" || return $?
+  refuse_symlink_home "second" "$B_HOME" || return $?
   refuse_same_homes
 }
 
 guard_manifest_homes() {
-  load_manifest
-  guard_home_roots
-  fail_on_unknown_entries "primary" "$A_HOME"
+  load_manifest || return $?
+  guard_home_roots || return $?
+  fail_on_unknown_entries "primary" "$A_HOME" || return $?
   fail_on_unknown_entries "second" "$B_HOME"
 }
 
@@ -434,8 +440,7 @@ classify_command() {
     echo second
     return 0
   fi
-  # Keep the zero-arg guard above before any `for arg in "${args[@]}"` value
-  # expansion.
+  # Keep the zero-arg guard above before the value expansions below.
   local args=("$@")
   local i=0 saw_ambiguous_option=0 scan_after_ambiguous_option=0 arg
   for arg in "${args[@]}"; do
@@ -488,11 +493,11 @@ classify_command() {
 }
 
 sync_projection() {
-  guard_home_roots
-  mkdir -p "$A_HOME" "$B_HOME"
-  fail_on_unknown_entries "primary" "$A_HOME"
-  fail_on_unknown_entries "second" "$B_HOME"
-  fail_if_primary_has_no_environment
+  guard_home_roots || return $?
+  mkdir -p "$A_HOME" "$B_HOME" || return $?
+  fail_on_unknown_entries "primary" "$A_HOME" || return $?
+  fail_on_unknown_entries "second" "$B_HOME" || return $?
+  fail_if_primary_has_no_environment || return $?
   local excludes=()
   local pattern
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
@@ -587,7 +592,7 @@ usage_status() {
   esac
 
   local home session_id session_file
-  guard_home_roots
+  guard_home_roots || return $?
   home="$(home_for_account_slot "$slot")"
   [[ -n "$home" ]] || {
     echo "second-codex usage could not infer CODEX_HOME" >&2
@@ -1636,7 +1641,7 @@ main() {
       ;;
     _session-hint)
       shift
-      guard_home_roots
+      guard_home_roots || return $?
       session_hint "$@"
       return
       ;;
@@ -1686,8 +1691,8 @@ main() {
       ;;
   esac
 
-  load_manifest
-  guard_home_roots
+  load_manifest || return $?
+  guard_home_roots || return $?
 
   if [[ "${1:-}" == "doctor" ]]; then
     doctor
