@@ -227,6 +227,26 @@ fi
 assert_grep "rerouting environment/config change" "$setup_no_subargs_out"
 assert_grep "^home=$SANDBOX/home-a args=mcp$" "$SANDBOX/codex.log"
 
+# Smoke test: `resume` with no session id reaches an empty tail slice before
+# find_session_id_after_resume_command. Bash 3.2 accepts that empty slice; the
+# finder guard documents the "no session id found" default.
+: > "$SANDBOX/codex.log"
+resume_no_session_out="$SANDBOX/resume-no-session.out"
+set +e
+run_wrapper resume >"$resume_no_session_out" 2>&1
+resume_no_session_rc=$?
+set -e
+if (( resume_no_session_rc != 0 )); then
+  if grep -q "unbound variable" "$resume_no_session_out"; then
+    echo "FAIL second-codex resume errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex resume exited $resume_no_session_rc" >&2
+  fi
+  cat "$resume_no_session_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=resume$" "$SANDBOX/codex.log"
+
 # Regression guard: classify_known_command is normally reached with a command
 # token, but a direct no-arg helper call should still fall through cleanly
 # instead of reading `$1` under nounset.
@@ -249,5 +269,29 @@ if (( classify_known_no_args_rc != 0 )); then
   exit 1
 fi
 assert_grep "^second$" "$SANDBOX/classify-known-no-args.out"
+
+# Regression guard: the resume helper defaults are "no session id found" when
+# called directly with no arguments. Keep this next to the wrapper-level resume
+# smoke test so future parser refactors retain both entry points.
+resume_helper_probe="$SANDBOX/resume-helper-probe"
+awk '
+  $0 == "main \"$@\"" {
+    print "find_session_id_after_resume_command \"$@\" && exit 20"
+    print "find_resume_session_arg \"$@\" && exit 21"
+    print "exit 0"
+    next
+  }
+  { print }
+' "$REPO_ROOT/second-codex" > "$resume_helper_probe"
+chmod 700 "$resume_helper_probe"
+set +e
+"$resume_helper_probe" >"$SANDBOX/resume-helper-no-args.out" 2>&1
+resume_helper_no_args_rc=$?
+set -e
+if (( resume_helper_no_args_rc != 0 )); then
+  echo "FAIL resume helper no-args exited $resume_helper_no_args_rc" >&2
+  cat "$SANDBOX/resume-helper-no-args.out" >&2
+  exit 1
+fi
 
 echo "PASS classify sandbox"
