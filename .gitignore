@@ -2,6 +2,8 @@
 /tmp/
 *.tmp
 *.log
+__pycache__/
+*.pyc
 
 # Never commit Codex account/runtime state.
 .codex/

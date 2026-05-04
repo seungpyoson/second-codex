@@ -1173,6 +1173,110 @@ resume_second_interactive=second-codex resume $session_id
 EOF
 }
 
+run_session_converter() {
+  # Internal helper for handoff-to-claude / handoff-from-claude.
+  # Unlike the `handoff` subcommand, the converter does not read or modify
+  # Codex home configs; it only reads the source session and writes a single
+  # new session file at the receiver's canonical session path. The manifest
+  # guard (guard_manifest_homes) is therefore not invoked from the dispatcher.
+  # $1 = converter direction (codex-to-claude | claude-to-codex)
+  # $2 = subcommand name (for error messages)
+  # remaining args are forwarded after the session id is parsed
+  local direction="$1"
+  local cmd_name="$2"
+  shift 2
+
+  local usage="usage: second-codex $cmd_name <session-id> [--target-cwd PATH]"
+  local session_id=""
+  local target_cwd=""
+  while (( $# > 0 )); do
+    case "$1" in
+      -h|--help)
+        echo "$usage"
+        return 0
+        ;;
+      --target-cwd)
+        if (( $# < 2 )); then
+          echo "$usage" >&2
+          return 64
+        fi
+        if [[ -n "$target_cwd" ]]; then
+          echo "second-codex $cmd_name: --target-cwd specified twice" >&2
+          return 64
+        fi
+        # Reject empty / whitespace-only values so user intent is not
+        # silently dropped when `--target-cwd ""` (or `"   "`, or a single
+        # Unicode NBSP) is passed. Python would otherwise fall through to
+        # the source/runtime cwd. Bash 3.2's [[:space:]] only matches
+        # ASCII whitespace, so we shell out to Python's str.strip() to
+        # match the converter's stricter Unicode-aware check at this
+        # boundary too — keeping both layers semantically identical.
+        if ! python3 -c 'import sys; sys.exit(0 if sys.argv[1].strip() else 1)' "$2"; then
+          echo "second-codex $cmd_name: --target-cwd value must not be empty or whitespace-only" >&2
+          return 64
+        fi
+        # Reject flag-shaped values so something like
+        # `--target-cwd --foo UUID` does not silently treat --foo as the cwd.
+        if [[ "$2" == -* ]]; then
+          echo "second-codex $cmd_name: --target-cwd value must not start with '-'" >&2
+          return 64
+        fi
+        target_cwd="$2"
+        shift 2
+        ;;
+      -*)
+        echo "$usage" >&2
+        return 64
+        ;;
+      *)
+        if [[ -n "$session_id" ]]; then
+          echo "$usage" >&2
+          return 64
+        fi
+        session_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$session_id" ]]; then
+    echo "$usage" >&2
+    return 64
+  fi
+
+  if ! is_valid_session_id "$session_id"; then
+    echo "second-codex refused malformed session id: $session_id" >&2
+    return 64
+  fi
+
+  if [[ "${SECOND_CODEX_TEST_DISABLE_PYTHON3:-0}" == "1" ]] || ! command -v python3 >/dev/null 2>&1; then
+    echo "second-codex $cmd_name requires python3" >&2
+    return 70
+  fi
+
+  local script_dir converter
+  script_dir="$(dirname "$WRAPPER_PATH")"
+  converter="$script_dir/lib/session_convert.py"
+  if [[ ! -f "$converter" ]]; then
+    echo "second-codex: converter script missing: $converter" >&2
+    return 70
+  fi
+
+  if [[ -n "$target_cwd" ]]; then
+    python3 "$converter" "$direction" "$session_id" --target-cwd "$target_cwd"
+  else
+    python3 "$converter" "$direction" "$session_id"
+  fi
+}
+
+handoff_to_claude() {
+  run_session_converter codex-to-claude handoff-to-claude "$@"
+}
+
+handoff_from_claude() {
+  run_session_converter claude-to-codex handoff-from-claude "$@"
+}
+
 session_hint() {
   local account="${1:-}"
   local cwd_filter="${2:-}"
@@ -1392,6 +1496,16 @@ main() {
       shift
       guard_manifest_homes
       handoff_session "$@"
+      return
+      ;;
+    handoff-to-claude)
+      shift
+      handoff_to_claude "$@"
+      return
+      ;;
+    handoff-from-claude)
+      shift
+      handoff_from_claude "$@"
       return
       ;;
     session-id)

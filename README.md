@@ -86,6 +86,42 @@ codex exec resume <session_id>
 
 The resumed session uses the primary Codex account/provider because it is launched through `codex`, not `second-codex`.
 
+### Cross-tool handoff (Codex ↔ Claude Code)
+
+To continue a Codex session inside Claude Code, or a Claude Code session inside Codex, use the cross-tool converters. They translate the session into the receiving tool's native format and write it at the canonical session storage path so the receiver's native resume command picks it up.
+
+```bash
+# Started in Codex, want to continue in Claude Code:
+second-codex handoff-to-claude <codex_session_id>
+# Output prints the new Claude session UUID and the resume command.
+claude --resume <new_uuid>
+
+# Started in Claude Code, want to continue in Codex:
+second-codex handoff-from-claude <claude_session_id>
+codex resume <new_uuid>
+```
+
+What is preserved: text turns, tool calls and results (with linkage for the mapped pair), `cwd` context, source per-record timestamps.
+
+What is dropped on cross-vendor:
+
+- Reasoning / thinking blocks — vendor-issued cryptographic signatures (`signature`, `encrypted_content`) cannot round-trip. Dropping them is the safe-by-construction policy: the converted session resumes successfully without them (verified by `test/e2e-resume-probe.sh`). The earlier "including them causes the receiving API to reject the turn" framing was an X-causes-Y claim observed only with X-present, never with an X-absent control, and has been withdrawn — the underlying causal mechanism remains unconfirmed.
+- Claude `attachment` (hook telemetry) and `file-history-snapshot` records — the load-bearing content is already in the corresponding `tool_result` blocks.
+- Codex `agent_message` events — full-corpus scan (468 rollouts / 19,619 records) shows ~88% are duplicates of a neighboring `response_item.message` (final assistant turn) and ~12% are intermediate streaming status pings the source model emitted but never published. Adding a handler would duplicate assistant content for the bulk case.
+- Codex `agent_reasoning` events — these carry plain-text reasoning and are dropped on the same cross-vendor boundary as the encrypted reasoning blocks above; reasoning content does not survive cross-vendor handoff.
+- Other Codex `event_msg` metadata: `token_count`, `exec_command_end`, `patch_apply_end`, `mcp_tool_call_end`, `guardian_assessment`, `collab_*`, `web_search_end`, `context_compacted`, `thread_name_updated`, `error`, `dynamic_tool_call_request`, `dynamic_tool_call_response` (shadowed by matching `function_call_output`), `thread_rolled_back`, `item_completed`.
+- Claude UI/internal records: `system`, `progress`, `last-prompt`, `permission-mode`, `queue-operation`, `pr-link`, `summary`, `custom-title`, `agent-name`.
+
+Tool taxonomy: only `Bash` ↔ `exec_command` round-trips structurally as a native tool call. Every other tool — Codex `custom_tool_call` (e.g. `apply_patch`), `web_search_call`, `tool_search_call`, and any Claude tool other than Bash — is folded into a descriptive text block (`[Used <vendor> tool \`<name>\` with input/arguments: ...]`) so the receiving model still sees the tool history without the receiving API having to recognize a foreign tool schema. The matching tool result is rendered as `[Tool result: ...]` when the call/output linkage is intact, or `[Orphan tool result: ...]` when the call record was filtered upstream (e.g. by a `turn_aborted`) or the source has no `call_id` linking the two. Downstream consumers that grep for tool-result rows must match both prefixes. Bash → exec_command is also slightly lossy: Claude's Bash input has no per-call workdir field, so every converted exec_command call inherits the session-level `cwd`.
+
+Genuinely unknown record types (a future Codex/Claude schema addition not in the documented drop-list) emit a stderr warning and are dropped, surfacing schema drift instead of letting it become silent loss.
+
+Both converters require `python3`. Converters write a fresh file under a new UUID and never mutate the source session, so any acceptance / rejection by the receiver is contained to the converted file. The exact validation behavior on a deliberately malformed rollout is the receiver's contract and is not exercised by this repo's tests.
+
+End-to-end resume acceptance has been verified manually with both `claude --resume <new_uuid>` and `codex exec resume <new_uuid>`: a marker placed in a *prior turn* of the source session is recalled by the receiving model after conversion, which only happens if the receiver actually loaded the converted history into context. The probe lives in `test/e2e-resume-probe.sh` and is not part of the standard `bash test/converter-sandbox.sh` suite because it requires live API access.
+
+The Claude `~/.claude/projects/<encoded-cwd>/` encoding rule was reverse-engineered from real local sessions: realpath the cwd, then replace every non-`[A-Za-z0-9-]` character with `-`. On macOS this means `/tmp/foo` becomes `-private-tmp-foo` (because `/tmp` symlinks to `/private/tmp`), `~/.claude` becomes `-Users-<u>--claude`, and `Application Support` becomes `Application-Support`. An earlier rule that only replaced `/` with `-` left converted sessions invisible to `claude --resume` for any source path traversing a macOS symlink.
+
 ## Security Notes
 
 - `second-codex` is account/config isolation, not an OS security sandbox.

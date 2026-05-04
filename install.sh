@@ -15,6 +15,8 @@ cp "$(dirname "$0")/second-codex" "$INSTALL_ROOT/second-codex"
 cp "$(dirname "$0")/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
 cp "$(dirname "$0")/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
 cp "$(dirname "$0")/README.md" "$INSTALL_ROOT/README.md"
+mkdir -p "$INSTALL_ROOT/lib"
+cp "$(dirname "$0")/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
 chmod +x "$INSTALL_ROOT/second-codex"
 
 link_shared_path() {
