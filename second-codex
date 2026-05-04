@@ -688,7 +688,7 @@ sessions = home / "sessions"
 # the bash wrapper validates UUIDs everywhere else (is_valid_session_id),
 # this is the one entry point that crosses into Python without that guard.
 # (Greptile P2 review of PR #7.)
-_SESSION_ID_RE = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
+_SESSION_ID_RE = re.compile(r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\Z")
 if not history.is_file():
     print(f"second-codex could not find Codex history: {history}", file=sys.stderr)
     raise SystemExit(67)

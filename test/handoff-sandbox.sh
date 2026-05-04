@@ -846,13 +846,74 @@ fi
 echo "session-id resolves symlinked cwd against physical-path rollout PASSED"
 
 # ---------------------------------------------------------------------------
-# session-id session_id glob-safety guard (Greptile P2 review of PR #7):
-# The Python heredoc reads session_id from history.jsonl and substitutes
-# it into a glob pattern. A history entry with glob metacharacters
-# (`*`, `?`, `[`) would expand the glob unexpectedly. Pin: a malformed
-# history entry alongside a valid one still produces the valid session
-# (the malformed entry is dropped by the UUID-shape regex, not glob-
-# expanded against the corpus).
+# session-id _SESSION_ID_RE direct regex unit test (PR #7 round 2):
+# Round-1 panel (Gemini) flagged the original glob-guard integration
+# test below as vacuous: target_id is appended last to history.jsonl
+# but the heredoc reads via `reversed(lines)` so target gets rank 0
+# and is processed first; the inner `payload.get("id") != session_id`
+# resilience also catches malformed entries silently. The integration
+# test below is preserved as a happy-path regression guard, but the
+# regex's actual drop-behavior is pinned here as a direct unit test.
+#
+# Extract the regex from the wrapper itself so a wrapper-side change
+# updates this test automatically (no drift between source-of-truth
+# and assertion).
+# ---------------------------------------------------------------------------
+WRAPPER_REGEX=$(awk -F'"' '/_SESSION_ID_RE = re.compile/{print $2; exit}' "$REPO_ROOT/second-codex")
+if [[ -z "$WRAPPER_REGEX" ]]; then
+  echo "FAIL could not extract _SESSION_ID_RE from $REPO_ROOT/second-codex"
+  exit 1
+fi
+python3 - "$WRAPPER_REGEX" <<'PY'
+import re
+import sys
+pat = re.compile(sys.argv[1])
+# Valid UUIDs the regex MUST accept (v4 lower, v7 mixed, all-zeros).
+for ok in [
+    "019dee99-1006-7000-8000-deadbeefcafe",
+    "01234567-89AB-CDEF-0123-456789ABCDEF",
+    "00000000-0000-0000-0000-000000000000",
+    "fedcba98-7654-3210-fedc-ba9876543210",
+]:
+    if not pat.match(ok):
+        print(f"FAIL regex should accept {ok!r}")
+        raise SystemExit(1)
+# Malformed inputs the regex MUST reject. Covers shell-glob
+# metacharacters (Greptile P2's exact concern), traversal attempts,
+# truncations, length bloat, embedded whitespace, and newline/CR
+# injection (history.jsonl could in theory carry CRLF on Windows-
+# written files even though Codex itself doesn't).
+for bad in [
+    "*",
+    "?-bogus",
+    "[abc].not-a-uuid",
+    "../../etc/passwd",
+    "",
+    "01234567",
+    "01234567-89ab-cdef-0123-456789abcdefXX",
+    "01234567 89ab cdef 0123 456789abcdef",
+    "01234567-89ab-cdef-0123-456789abcdef\n",
+    "01234567-89ab-cdef-0123-456789abcdef\r",
+    "01234567-89ab-cdef-0123-456789abcde",     # one short in the last group
+    "g1234567-89ab-cdef-0123-456789abcdef",    # non-hex char
+    "{01234567-89ab-cdef-0123-456789abcdef}",  # brace-wrapped variant
+]:
+    if pat.match(bad):
+        print(f"FAIL regex should reject {bad!r}")
+        raise SystemExit(1)
+print("UUID regex unit test PASSED (regex extracted from wrapper)")
+PY
+
+# ---------------------------------------------------------------------------
+# session-id glob-safety happy-path regression guard (Greptile P2):
+# Functional non-regression guard — pins that a malformed history entry
+# alongside a valid target does not break wrapper output. This does NOT
+# directly verify the regex drops malformed entries (the unit test
+# above does that); the algorithm's inner `payload.get("id") !=
+# session_id` check would also resiliently reach the valid target even
+# without the regex. Kept as a happy-path pin — if a future refactor
+# changes ranking/iteration order such that malformed neighbors break
+# the loop, this catches it.
 # ---------------------------------------------------------------------------
 GLOB_HOME="$SANDBOX/glob-guard/home-second"
 mkdir -p "$GLOB_HOME/sessions/2026/05/04"
@@ -871,14 +932,19 @@ target.write_text(json.dumps({
     "type": "session_meta",
     "payload": {"id": target_id, "cwd": target_cwd},
 }) + "\n")
-# History.jsonl with a malformed entry FIRST (most recent), then the
-# valid target. If the malformed entry weren't filtered, the glob would
-# attempt expansion against the corpus and likely error or miss-match.
+# Mix malformed entries among valid target in history.jsonl. Iteration
+# order: tail_lines() yields forward, then reversed(lines) processes
+# bottom-up. Writing target first then bogus entries below means
+# reversed-iteration sees bogus FIRST in recent_rank. With the regex
+# guard active, bogus entries are dropped before glob expansion. Even
+# without the guard, the algorithm would still ultimately reach the
+# valid target via the inner id-match check — this test is a happy-
+# path regression pin for that resilience, not a direct regex pin.
 malformed_ids = ["*", "?-bogus", "[abc].not-a-uuid", "../../etc/passwd"]
 with (home / "history.jsonl").open("w") as f:
+    f.write(json.dumps({"session_id": target_id, "ts": 1777800000, "text": "target"}) + "\n")
     for bogus in malformed_ids:
         f.write(json.dumps({"session_id": bogus, "ts": 1777800001, "text": "bogus"}) + "\n")
-    f.write(json.dumps({"session_id": target_id, "ts": 1777800000, "text": "target"}) + "\n")
 PY
 GLOB_OUT=$(SECOND_CODEX_SWITCH_ROOT="$SANDBOX/glob-root" \
   CODEX_A_HOME="$SANDBOX/glob-home-a" \
@@ -894,6 +960,6 @@ if ! grep -Fxq "$GLOB_TARGET_ID" <<<"$GLOB_OUT"; then
   echo "FAIL session-id glob-guard returned wrong id: got '$GLOB_OUT', expected '$GLOB_TARGET_ID'"
   exit 1
 fi
-echo "session-id rejects non-UUID history entries before glob expansion PASSED"
+echo "session-id finds valid target despite malformed history neighbors PASSED"
 
 echo "PASS handoff sandbox"
