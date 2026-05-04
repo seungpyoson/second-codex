@@ -974,7 +974,7 @@ find_resume_session_arg() {
           i=$((i + 1))
         fi
         ;;
-      exec)
+      exec|e)
         i=$((i + 1))
         saw_ambiguous_option=0
         while (( i < ${#args[@]} )); do
