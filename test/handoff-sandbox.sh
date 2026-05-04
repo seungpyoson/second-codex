@@ -858,11 +858,32 @@ echo "session-id resolves symlinked cwd against physical-path rollout PASSED"
 #
 # Extract the regex from the wrapper itself so a wrapper-side change
 # updates this test automatically (no drift between source-of-truth
-# and assertion).
+# and assertion). The extractor handles all four quote forms Python
+# accepts for raw strings (r"...", r'...', r"""...""", r'''...''')
+# and tolerates multi-line `re.compile(...)` formatting. Falls back
+# to fail-loud (non-zero exit) if the pattern cannot be located —
+# any future refactor that breaks extraction surfaces here, not as
+# silent test drift (Kimi round-3 hygiene close).
 # ---------------------------------------------------------------------------
-WRAPPER_REGEX=$(awk -F'"' '/_SESSION_ID_RE = re.compile/{print $2; exit}' "$REPO_ROOT/second-codex")
+WRAPPER_REGEX=$(python3 - "$REPO_ROOT/second-codex" <<'PY'
+import re
+import sys
+
+src = open(sys.argv[1]).read()
+m = re.search(
+    r"_SESSION_ID_RE\s*=\s*re\.compile\(\s*r?"
+    r"(?P<q>\"\"\"|'''|\"|')(?P<pat>.*?)(?P=q)",
+    src,
+    re.DOTALL,
+)
+if not m or not m.group("pat"):
+    sys.stderr.write("FAIL could not extract _SESSION_ID_RE\n")
+    sys.exit(1)
+print(m.group("pat"))
+PY
+)
 if [[ -z "$WRAPPER_REGEX" ]]; then
-  echo "FAIL could not extract _SESSION_ID_RE from $REPO_ROOT/second-codex"
+  echo "FAIL _SESSION_ID_RE extraction returned empty"
   exit 1
 fi
 python3 - "$WRAPPER_REGEX" <<'PY'
