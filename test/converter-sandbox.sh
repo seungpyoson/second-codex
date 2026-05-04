@@ -1020,4 +1020,62 @@ if os.path.realpath("/tmp") == "/private/tmp":
 print("encode_claude_project matches Claude's lookup convention PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# AA (Class B): emit() must not crash with UnicodeEncodeError when stdout
+# is ASCII (PYTHONUTF8=0 LC_ALL=C) and the source/target paths contain
+# non-ASCII characters. Pre-fix the bare sys.stdout.write call inherited
+# the locale encoding and raised UnicodeEncodeError mid-conversion.
+# ---------------------------------------------------------------------------
+TAA_HOME="$SANDBOX/utf8-home/코덱스-home"
+mkdir -p "$TAA_HOME/sessions/2026/05/04"
+TAA_UUID="00000000-0000-7000-8000-aaaaaaaaaaaa"
+cat > "$TAA_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-$TAA_UUID.jsonl" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TAA_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"/tmp/utf8-test","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"hi","images":[],"local_images":[],"text_elements":[]}}
+EOF
+
+CODEX_HOME="$TAA_HOME" CLAUDE_HOME="$SANDBOX/utf8-claude" \
+  PYTHONUTF8=0 LC_ALL=C \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TAA_UUID" >"$SANDBOX/utf8-emit.stdout" 2>"$SANDBOX/utf8-emit.stderr" || {
+    echo "FAIL: emit() crashed under PYTHONUTF8=0 LC_ALL=C with non-ASCII source path"
+    cat "$SANDBOX/utf8-emit.stderr"
+    exit 1
+  }
+grep -q '^new session UUID:' "$SANDBOX/utf8-emit.stdout" || {
+  echo "FAIL: emit() output missing the expected 'new session UUID:' line"
+  cat "$SANDBOX/utf8-emit.stdout"
+  exit 1; }
+echo "emit() under C locale with non-ASCII paths PASSED"
+
+# ---------------------------------------------------------------------------
+# BB (review #5 Kimi): _bump_ts_ms must handle pathological timestamp shapes
+# without producing malformed timestamps or losing precision. Pre-fix:
+# multi-dot inputs like '...00.123.456Z' produced '...00.123.457Z' (still
+# multi-dot, unparseable as ISO), and short fractions like '...00.12Z' were
+# misread as 12ms instead of 120ms (3-digit ms).
+# ---------------------------------------------------------------------------
+python3 - <<EOF
+import sys
+sys.path.insert(0, "$REPO_ROOT/lib")
+import session_convert as sc
+
+cases = [
+    ("2026-05-04T00:00:00.000Z",     "2026-05-04T00:00:00.001Z"),
+    ("2026-05-04T00:00:00Z",         "2026-05-04T00:00:00.001Z"),
+    ("2026-05-04T00:00:00.999Z",     "2026-05-04T00:00:00.999Z"),
+    # Multi-dot: returns ts unchanged (does not produce '...00.123.457Z').
+    ("2026-05-04T00:00:00.123.456Z", "2026-05-04T00:00:00.123.456Z"),
+    # 2-digit fraction means 120ms not 12ms — pad to 3-digit before bump.
+    ("2026-05-04T00:00:00.12Z",      "2026-05-04T00:00:00.121Z"),
+    # 1-digit fraction means 100ms.
+    ("2026-05-04T00:00:00.1Z",       "2026-05-04T00:00:00.101Z"),
+    # Microsecond fraction: truncate to 3 digits before bump.
+    ("2026-05-04T00:00:00.123456Z",  "2026-05-04T00:00:00.124Z"),
+]
+for inp, want in cases:
+    got = sc._bump_ts_ms(inp, 1)
+    assert got == want, f"_bump_ts_ms({inp!r}) = {got!r}, expected {want!r}"
+print("_bump_ts_ms edge cases (multi-dot, short fraction, microseconds) PASSED")
+EOF
+
 echo "all converter sandbox tests passed"

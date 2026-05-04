@@ -320,31 +320,51 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
 
 
+_TS_FRACTION_RE = re.compile(r"^(.*\d{2}:\d{2}:\d{2})\.(\d{1,9})Z$")
+_TS_NO_FRACTION_RE = re.compile(r"^(.*\d{2}:\d{2}:\d{2})Z$")
+
+
 def _bump_ts_ms(ts: str, n: int) -> str:
     """Return ts shifted forward by n milliseconds, preserving '...Z' shape.
 
     Used so multiple converted records derived from a single source record
     carry distinct timestamps in source order, instead of all sharing the
     same string. Defensive on malformed input — returns ts unchanged when
-    the expected '...HH:MM:SS.mmmZ' or '...HH:MM:SSZ' shape is not present.
+    the expected '...HH:MM:SS.fracZ' or '...HH:MM:SSZ' shape is not present.
+
+    Fraction precision: ISO-8601 lets the fractional part be any number
+    of digits. We normalize to milliseconds (3 digits): a 1-2 digit
+    fraction like '.12' (which means 120ms, not 12ms) is left-padded
+    to '.120' before adding n; a longer fraction like microseconds
+    '.123456' is truncated to '.123' before bumping. Multi-dot
+    pathological inputs (e.g. '...00.123.456Z') don't match the regex
+    and are returned unchanged.
     """
     if n <= 0 or not ts.endswith("Z"):
         return ts
-    head, dot, rest = ts[:-1].rpartition(".")
-    if not dot:
-        # No fractional component; treat .000 as the baseline.
+    m = _TS_FRACTION_RE.match(ts)
+    if m:
+        head, frac = m.group(1), m.group(2)
+        # Normalize fraction to milliseconds: pad short, truncate long.
+        if len(frac) < 3:
+            frac = frac.ljust(3, "0")
+        else:
+            frac = frac[:3]
+        try:
+            ms = int(frac)
+        except ValueError:
+            return ts
+        new_ms = ms + n
+        if new_ms >= 1000:
+            # Cap at .999 rather than rolling into seconds; > 999
+            # emissions per source record is unrealistic for any session.
+            new_ms = 999
+        return f"{head}.{new_ms:03d}Z"
+    m = _TS_NO_FRACTION_RE.match(ts)
+    if m:
         new_ms = min(n, 999)
-        return f"{ts[:-1]}.{new_ms:03d}Z"
-    try:
-        ms = int(rest)
-    except ValueError:
-        return ts
-    new_ms = ms + n
-    if new_ms >= 1000:
-        # Cap at .999 rather than rolling into seconds; > 999 emissions per
-        # source record is unrealistic for any session.
-        new_ms = 999
-    return f"{head}.{new_ms:03d}Z"
+        return f"{m.group(1)}.{new_ms:03d}Z"
+    return ts
 
 
 def codex_rollout_path(new_uuid: str) -> Path:
@@ -974,8 +994,26 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    # Pin stdout/stderr to UTF-8 so emit() can safely print paths containing
+    # non-ASCII characters (e.g. user home dirs with CJK / emoji) under
+    # PYTHONUTF8=0 LC_ALL=C, where the default stream encoding is ASCII and
+    # any non-ASCII byte raises UnicodeEncodeError.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, AttributeError):
+                pass
+
     def emit(line: str) -> None:
-        sys.stdout.write(line + "\n")
+        try:
+            sys.stdout.write(line + "\n")
+        except UnicodeEncodeError:
+            # Defensive: if reconfigure() didn't apply (e.g. wrapped stdout),
+            # fall back to a direct UTF-8 byte write.
+            sys.stdout.flush()
+            sys.stdout.buffer.write((line + "\n").encode("utf-8", errors="replace"))
 
     if args.cmd == "codex-to-claude":
         src = find_codex_session(args.uuid)
