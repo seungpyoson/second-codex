@@ -580,6 +580,40 @@ SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/exec-alias-resume.out"
 cmp -s "$SANDBOX/prompt-home-a/sessions/$EXEC_ALIAS_RESUME_REL" "$SANDBOX/prompt-home-second/sessions/$EXEC_ALIAS_RESUME_REL"
 
+FORK_SESSION_ID="00000000-0000-7000-8000-000000000023"
+FORK_REL="2026/05/03/rollout-2026-05-03T19-24-47-$FORK_SESSION_ID.jsonl"
+cat >> "$SANDBOX/prompt-home-a/history.jsonl" <<EOF
+{"session_id":"$FORK_SESSION_ID","ts":1760000023,"text":"fork primary work"}
+EOF
+cat > "$SANDBOX/prompt-home-a/sessions/$FORK_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$FORK_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/prompt-home-a" \
+SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
+"$REPO_ROOT/second-codex" fork "$FORK_SESSION_ID" >"$SANDBOX/fork.out" 2>&1
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/fork.out"
+cmp -s "$SANDBOX/prompt-home-a/sessions/$FORK_REL" "$SANDBOX/prompt-home-second/sessions/$FORK_REL"
+
+FORK_OPTION_SESSION_ID="00000000-0000-7000-8000-000000000024"
+FORK_OPTION_REL="2026/05/03/rollout-2026-05-03T19-25-47-$FORK_OPTION_SESSION_ID.jsonl"
+cat >> "$SANDBOX/prompt-home-a/history.jsonl" <<EOF
+{"session_id":"$FORK_OPTION_SESSION_ID","ts":1760000024,"text":"fork option primary work"}
+EOF
+cat > "$SANDBOX/prompt-home-a/sessions/$FORK_OPTION_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$FORK_OPTION_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/prompt-home-a" \
+SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
+"$REPO_ROOT/second-codex" --model gpt-5.5 fork "$FORK_OPTION_SESSION_ID" >"$SANDBOX/fork-option.out" 2>&1
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/fork-option.out"
+cmp -s "$SANDBOX/prompt-home-a/sessions/$FORK_OPTION_REL" "$SANDBOX/prompt-home-second/sessions/$FORK_OPTION_REL"
+
 HISTORY_SYMLINK_SESSION_ID="00000000-0000-7000-8000-000000000010"
 HISTORY_SYMLINK_REL="2026/05/03/rollout-2026-05-03T19-12-47-$HISTORY_SYMLINK_SESSION_ID.jsonl"
 cat >> "$SANDBOX/home-second/history.jsonl" <<EOF

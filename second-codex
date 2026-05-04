@@ -1012,7 +1012,7 @@ find_resume_session_arg() {
         done
         return 1
         ;;
-      resume)
+      resume|fork)
         find_session_id_after_resume_command "${args[@]:$((i + 1))}"
         return
         ;;
