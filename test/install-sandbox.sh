@@ -33,6 +33,15 @@ SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
 grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
 
+: > "$SANDBOX/helper.log"
+mkdir -p "$SANDBOX/shell-snapshots"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; { typeset -f __second_codex_helper_dir __second_codex_should_print_session_hint __second_codex_session_hint codex second-codex; typeset -p SECOND_CODEX_SHELL_HELPER_DIR; } > "$2"' \
+    _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/snapshot.zsh"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/snapshot.zsh"
+grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
+
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/codex" <<'SH'
 #!/usr/bin/env bash
@@ -99,8 +108,7 @@ SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshenv.log" \
 HOME="$SANDBOX/home" \
 ZDOTDIR="$SANDBOX/home" \
 PATH="$SANDBOX/bin:$PATH" \
-env -u CODEX_ACCOUNT_SLOT -u SECOND_CODEX_ACTIVE_ACCOUNT \
-zsh -c 'codex exec hello'
+  env -u CODEX_ACCOUNT_SLOT -u SECOND_CODEX_ACTIVE_ACCOUNT -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'codex exec hello'
 grep -Fxq "primary-codex:exec hello account=missing active=missing" "$SANDBOX/zshenv.log"
 if grep -Fq "installed-helper:_session-hint" "$SANDBOX/zshenv.log"; then
   echo "FAIL non-interactive zsh command printed a session hint"
