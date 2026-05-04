@@ -92,6 +92,21 @@ if run_wrapper "$SANDBOX/real-primary" "$SANDBOX/ancestor-link/second-home" >"$S
 fi
 grep -q "refused symlinked second CODEX_HOME" "$SANDBOX/ancestor-symlink.out"
 
+mkdir -p "$SANDBOX/shim-target"
+ln -s "$SANDBOX/shim-target" "$SANDBOX/shim-parent-link"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/real-primary" \
+  SECOND_CODEX_HOME="$SANDBOX/real-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim-parent-link/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
+  "$REPO_ROOT/second-codex" login status >"$SANDBOX/shim-parent-link.out" 2>&1; then
+  echo "FAIL shim directory with a symlinked ancestor was not refused"
+  exit 1
+fi
+grep -q "refused symlinked shim directory" "$SANDBOX/shim-parent-link.out"
+test ! -e "$SANDBOX/shim-target/shim/codex"
+
 mkdir -p "$SANDBOX/unknown-primary" "$SANDBOX/unknown-second"
 cat > "$SANDBOX/unknown-primary/config.toml" <<'TOML'
 model = "gpt-5.5"

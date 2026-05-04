@@ -29,6 +29,9 @@ if [[ "${1:-}" == "mcp" && "${2:-}" == "add" ]]; then
     exit 65
   fi
   printf '\n[mcp_servers.%s]\ncommand = "%s"\n' "$3" "$5" >> "${CODEX_HOME:?missing CODEX_HOME}/config.toml"
+  if [[ "$3" == "sandbox-reroute-fail" ]]; then
+    exit 42
+  fi
   exit 0
 fi
 echo "unexpected mock codex invocation: $*" >&2
@@ -50,4 +53,18 @@ grep -q "sandbox-reroute" "$SANDBOX/home-a/config.toml"
 test -f "$SANDBOX/home-second/config.toml"
 # The second home is updated by sync_projection after the primary-home reroute finishes.
 grep -q "sandbox-reroute" "$SANDBOX/home-second/config.toml"
+
+FAIL_OUT="$SANDBOX/reroute-fail.out"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_EXPECT_PRIMARY="$SANDBOX/home-a" \
+  "$REPO_ROOT/second-codex" mcp add sandbox-reroute-fail -- /usr/bin/false >"$FAIL_OUT" 2>&1; then
+  echo "FAIL failing reroute unexpectedly succeeded"
+  exit 1
+fi
+grep -q "sandbox-reroute-fail" "$SANDBOX/home-a/config.toml"
+grep -q "sandbox-reroute-fail" "$SANDBOX/home-second/config.toml"
 echo "PASS reroute sandbox"

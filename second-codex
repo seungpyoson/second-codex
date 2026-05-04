@@ -195,6 +195,7 @@ is_valid_session_id() {
 refuse_symlink_home() {
   local label="$1"
   local home="$2"
+  local noun="${3:-CODEX_HOME}"
   local path="$home"
   local current="" part target
   local -a parts
@@ -211,7 +212,7 @@ refuse_symlink_home() {
           continue
           ;;
       esac
-      echo "second-codex refused symlinked $label CODEX_HOME: $home" >&2
+      echo "second-codex refused symlinked $label $noun: $home" >&2
       return 73
     fi
   done
@@ -316,7 +317,15 @@ classify_known_command() {
 
   case "$command" in
     exec|resume|chat)
+      local after_separator=0
       for token in "$@"; do
+        if (( after_separator )); then
+          continue
+        fi
+        if [[ "$token" == "--" ]]; then
+          after_separator=1
+          continue
+        fi
         option_is_auth_mutation "$token" && { echo block; return; }
       done
       echo second
@@ -388,6 +397,7 @@ classify_command() {
           return
         fi
         if (( saw_ambiguous_option )); then
+          saw_ambiguous_option=0
           i=$((i + 1))
           continue
         fi
@@ -898,7 +908,7 @@ EOF
 
 find_resume_session_arg() {
   local args=("$@")
-  local i=0 arg
+  local i=0 saw_ambiguous_option=0 arg
   while (( i < ${#args[@]} )); do
     arg="${args[$i]}"
     case "$arg" in
@@ -914,11 +924,13 @@ find_resume_session_arg() {
         elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
           i=$((i + 2))
         else
+          saw_ambiguous_option=1
           i=$((i + 1))
         fi
         ;;
       resume)
         i=$((i + 1))
+        saw_ambiguous_option=0
         while (( i < ${#args[@]} )); do
           arg="${args[$i]}"
           case "$arg" in
@@ -941,10 +953,16 @@ find_resume_session_arg() {
               elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
                 i=$((i + 2))
               else
+                saw_ambiguous_option=1
                 i=$((i + 1))
               fi
               ;;
             *)
+              if (( saw_ambiguous_option )); then
+                saw_ambiguous_option=0
+                i=$((i + 1))
+                continue
+              fi
               if is_valid_session_id "$arg"; then
                 printf '%s\n' "$arg"
                 return 0
@@ -956,6 +974,11 @@ find_resume_session_arg() {
         return 1
         ;;
       *)
+        if (( saw_ambiguous_option )); then
+          saw_ambiguous_option=0
+          i=$((i + 1))
+          continue
+        fi
         return 1
         ;;
     esac
@@ -1091,6 +1114,7 @@ session_hint() {
 }
 
 ensure_shim() {
+  refuse_symlink_home "shim" "$BIN_DIR" "directory" || return $?
   if [[ -L "$BIN_DIR" ]]; then
     echo "second-codex refused to use symlinked shim directory: $BIN_DIR" >&2
     return 73
@@ -1328,11 +1352,13 @@ main() {
   case "$classification" in
     reroute)
       reroute_notice
+      local rc=0
       CODEX_ACCOUNT_SLOT=primary \
         SECOND_CODEX_ACTIVE_ACCOUNT=primary \
         CODEX_HOME="$A_HOME" \
-        "$REAL_CODEX" "$@"
+        "$REAL_CODEX" "$@" || rc=$?
       sync_projection
+      return "$rc"
       ;;
     second)
       SECOND_CODEX_SWITCH_WRAPPER="$WRAPPER_PATH" \

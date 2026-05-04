@@ -12,6 +12,11 @@ __second_codex_should_print_session_hint() {
       --help|-h|--version|-V)
         return 1
         ;;
+    esac
+  done
+
+  for arg in "$@"; do
+    case "$arg" in
       exec|resume)
         return 0
         ;;

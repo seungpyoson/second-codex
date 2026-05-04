@@ -408,6 +408,26 @@ fi
 grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-remote.out"
 cmp -s "$SANDBOX/home-a/sessions/$RESUME_REMOTE_REL" "$SANDBOX/home-second/sessions/$RESUME_REMOTE_REL"
 
+RESUME_UNKNOWN_FLAG_SESSION_ID="00000000-0000-7000-8000-000000000099"
+RESUME_UNKNOWN_FLAG_REL="2026/05/03/rollout-2026-05-03T19-21-47-$RESUME_UNKNOWN_FLAG_SESSION_ID.jsonl"
+cat >> "$SANDBOX/home-a/history.jsonl" <<EOF
+{"session_id":"$RESUME_UNKNOWN_FLAG_SESSION_ID","ts":1760000099,"text":"resume unknown flag primary work"}
+EOF
+cat > "$SANDBOX/home-a/sessions/$RESUME_UNKNOWN_FLAG_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$RESUME_UNKNOWN_FLAG_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/false" \
+  "$REPO_ROOT/second-codex" resume --unknown-future-flag my_value "$RESUME_UNKNOWN_FLAG_SESSION_ID" >"$SANDBOX/resume-unknown-flag.out" 2>&1; then
+  echo "FAIL mock codex unexpectedly succeeded"
+  exit 1
+fi
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/resume-unknown-flag.out"
+cmp -s "$SANDBOX/home-a/sessions/$RESUME_UNKNOWN_FLAG_REL" "$SANDBOX/home-second/sessions/$RESUME_UNKNOWN_FLAG_REL"
+
 RESUME_LAST_PROMPT_SESSION_ID="00000000-0000-7000-8000-000000000018"
 RESUME_LAST_PROMPT_REL="2026/05/03/rollout-2026-05-03T19-19-47-$RESUME_LAST_PROMPT_SESSION_ID.jsonl"
 cat >> "$SANDBOX/home-a/history.jsonl" <<EOF

@@ -125,6 +125,9 @@ assert_second refresh-cache-flag --refresh-cache=1 exec hi
 assert_second remote-auth-token-env --remote-auth-token-env MY_VAR exec hi
 assert_second separator-prompt -- please login
 assert_second separator-update-prompt -- help me update the plugin config
+assert_second exec-separator-flag exec -- --login
+assert_second chat-separator-flag chat -- --auth-token=secret
+assert_second resume-separator-flag resume -- --login=foo 00000000-0000-7000-8000-000000000099
 assert_second oss-prompt --oss write mcp docs
 assert_second search-prompt --search help me update plugin config
 assert_second no-alt-screen-prompt --no-alt-screen rotate auth token
