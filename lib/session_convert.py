@@ -6,17 +6,35 @@ JSONL at the target tool's canonical session path. The target tool's native
 resume command (`claude --resume <uuid>` or `codex resume <uuid>`) then loads
 the converted session as if it were native.
 
-The conversion is content-preserving for text messages and tool calls. It
-drops reasoning/thinking blocks (cross-vendor reasoning provenance does not
-round-trip), attachments (Claude Code-specific hook output, folded into
-preceding tool_result text), and file-history-snapshots (non-essential).
-
 Subcommands:
   codex-to-claude <codex-uuid> [--target-cwd <path>]
   claude-to-codex <claude-uuid> [--target-cwd <path>]
 
 Each prints the new session UUID on success; resume the converted session
 with the target tool's native command.
+
+Conversion semantics:
+
+- Text turns translate role-for-role (user / assistant).
+- Tool calls round-trip structurally only when both sides recognize the
+  tool; the cross-vendor mapping is deliberately narrow (Bash <->
+  exec_command). Unmapped tools fold into descriptive text blocks so the
+  receiving model still sees the prior tool history without depending on
+  the receiving API to recognize a foreign tool name.
+- Reasoning / thinking blocks are dropped on cross-vendor handoff. Both
+  vendors store reasoning with cryptographic signatures (Claude
+  `signature`, Codex `encrypted_content`) that cannot round-trip across
+  vendors; including them causes the receiving API to reject the turn.
+- Codex `turn_aborted` markers cause the response_items emitted since the
+  most recent `task_started` to be discarded, matching the source model's
+  view that those items were never committed.
+- Claude `attachment` (hook telemetry) and `file-history-snapshot` records
+  are dropped: their information is already present in the corresponding
+  `tool_result` content (what the source model actually saw), or is
+  Claude Code-internal bookkeeping not load-bearing for conversation
+  continuation.
+- Source `cwd` is read from the most recent record that carries one;
+  runtime cwd at resume time overrides per receiver behavior.
 """
 
 from __future__ import annotations
@@ -83,23 +101,38 @@ def encode_claude_project(cwd: str) -> str:
     return cwd.replace("/", "-")
 
 
-def find_codex_session(uuid_partial: str) -> Path:
+_FULL_UUID_RE = __import__("re").compile(
+    r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+)
+
+
+def _validate_session_uuid(value: str, label: str) -> None:
+    """Reject empty / sub-string UUIDs upfront. The bash wrapper enforces the
+    same regex; this Python-side check makes the contract consistent for
+    direct CLI use."""
+    if not _FULL_UUID_RE.match(value or ""):
+        raise ValueError(f"{label} session id must be a full UUID, got {value!r}")
+
+
+def find_codex_session(uuid_value: str) -> Path:
+    _validate_session_uuid(uuid_value, "Codex")
     bases = _codex_session_bases()
     matches = []
     for base in bases:
         if not base.exists():
             continue
         for path in base.rglob("rollout-*.jsonl"):
-            if uuid_partial in path.name:
+            if uuid_value in path.name:
                 matches.append(path)
     if not matches:
-        raise FileNotFoundError(f"No Codex rollout matching '{uuid_partial}' under {bases}")
+        raise FileNotFoundError(f"No Codex rollout matching '{uuid_value}' under {bases}")
     if len(matches) > 1:
-        raise ValueError(f"Ambiguous Codex UUID '{uuid_partial}': matches {len(matches)} files")
+        raise ValueError(f"Ambiguous Codex UUID '{uuid_value}': matches {len(matches)} files")
     return matches[0]
 
 
-def find_claude_session(uuid_partial: str) -> Path:
+def find_claude_session(uuid_value: str) -> Path:
+    _validate_session_uuid(uuid_value, "Claude")
     base = _claude_projects_base()
     if not base.exists():
         raise FileNotFoundError(f"Claude projects directory missing: {base}")
@@ -108,34 +141,55 @@ def find_claude_session(uuid_partial: str) -> Path:
         if not project.is_dir():
             continue
         for path in project.glob("*.jsonl"):
-            if uuid_partial in path.name:
+            if uuid_value in path.name:
                 matches.append(path)
     if not matches:
-        raise FileNotFoundError(f"No Claude session matching '{uuid_partial}' under {base}")
+        raise FileNotFoundError(f"No Claude session matching '{uuid_value}' under {base}")
     if len(matches) > 1:
-        raise ValueError(f"Ambiguous Claude UUID '{uuid_partial}': matches {len(matches)} files")
+        raise ValueError(f"Ambiguous Claude UUID '{uuid_value}': matches {len(matches)} files")
     return matches[0]
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     out = []
     with path.open() as f:
-        for line in f:
+        for lineno, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
                 out.append(json.loads(line))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                # Log to stderr so bugs in the source file are surfaced rather
+                # than silently dropping data. Conversion still proceeds.
+                sys.stderr.write(
+                    f"session_convert: warning: skipping malformed JSON line "
+                    f"{lineno} in {path}: {exc}\n"
+                )
                 continue
     return out
 
 
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    """Write atomically: stream into <path>.tmp, then rename. Prevents a
+    partial write from leaving the canonical session path corrupt if the
+    process is interrupted mid-stream."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
-        for r in records:
-            f.write(json.dumps(r) + "\n")
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with tmp.open("w") as f:
+            for r in records:
+                # ensure_ascii=False keeps unicode content readable and matches
+                # how native sessions are stored on disk.
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        # Clean up the temp file on any failure (including KeyboardInterrupt).
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def now_iso() -> str:
@@ -160,14 +214,57 @@ def claude_session_path(new_uuid: str, cwd: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop response_items emitted between the most recent task_started and a
+    matching turn_aborted. The source model treated those records as
+    abandoned; including them in the converted output would feed the receiver
+    content the original model never committed.
+
+    Implementation: walk records once, mark any response_item record that
+    falls between a task_started and a subsequent turn_aborted (without an
+    intervening task_complete) for removal.
+    """
+    keep = [True] * len(records)
+    pending_start: int | None = None
+    for i, r in enumerate(records):
+        rtype = r.get("type")
+        if rtype == "event_msg":
+            payload = r.get("payload", {}) if isinstance(r.get("payload"), dict) else {}
+            ptype = payload.get("type")
+            if ptype == "task_started":
+                pending_start = i
+            elif ptype == "task_complete":
+                pending_start = None
+        elif rtype == "turn_aborted":
+            if pending_start is not None:
+                for j in range(pending_start + 1, i):
+                    if records[j].get("type") == "response_item":
+                        keep[j] = False
+            pending_start = None
+    return [r for r, k in zip(records, keep) if k]
+
+
 def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
     """Convert a Codex rollout to a Claude session. Returns (output path, new uuid)."""
     records = read_jsonl(src)
+    records = _records_after_aborts_filtered(records)
     session_meta = next((r for r in records if r.get("type") == "session_meta"), None)
     if session_meta is None:
         raise ValueError(f"Source has no session_meta record: {src}")
 
-    cwd = target_cwd or session_meta.get("payload", {}).get("cwd") or os.getcwd()
+    # Pick cwd: explicit override beats most-recent record-level cwd, which
+    # beats session_meta.cwd, which beats the runtime cwd as a last resort.
+    src_cwd_recent: str | None = None
+    for r in records:
+        c = r.get("payload", {}).get("cwd") if isinstance(r.get("payload"), dict) else None
+        if c:
+            src_cwd_recent = c
+    cwd = (
+        target_cwd
+        or src_cwd_recent
+        or session_meta.get("payload", {}).get("cwd")
+        or os.getcwd()
+    )
     new_uuid = gen_uuid_v7()
 
     out: list[dict[str, Any]] = []
@@ -334,16 +431,44 @@ def _normalize_tool_input(tool_name: str, args: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _detect_codex_cli_version() -> str:
+    """Best-effort plumbing of the local Codex CLI version into session_meta.
+    Falls back to a sentinel rather than failing the conversion when codex
+    is not installed or the output shape changes."""
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["codex", "--version"], capture_output=True, text=True, timeout=2
+        )
+        if res.returncode == 0:
+            # Output is like "OpenAI Codex v0.128.0 (research preview)" or
+            # similar. Extract the first vN.N.N-shaped token if present.
+            import re
+            m = re.search(r"v?(\d+\.\d+\.\d+)", res.stdout)
+            if m:
+                return m.group(1)
+    except (FileNotFoundError, OSError, __import__("subprocess").TimeoutExpired):
+        pass
+    return "0.0.0-translated"
+
+
 def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str]:
     """Convert a Claude session to a Codex rollout. Returns (output path, new uuid)."""
     records = read_jsonl(src)
     if not records:
         raise ValueError(f"Source is empty: {src}")
 
-    # Pick cwd from first record that has one, or fall back.
-    src_cwd = next((r.get("cwd") for r in records if r.get("cwd")), os.getcwd())
-    cwd = target_cwd or src_cwd
+    # Pick cwd: explicit override beats most-recent record-level cwd, which
+    # beats the runtime cwd as a last resort. Most-recent over first-found
+    # because users sometimes change directories mid-session.
+    src_cwd: str | None = None
+    for r in records:
+        c = r.get("cwd")
+        if c:
+            src_cwd = c
+    cwd = target_cwd or src_cwd or os.getcwd()
     new_uuid = gen_uuid_v7()
+    cli_version = _detect_codex_cli_version()
 
     out: list[dict[str, Any]] = []
     tool_id_to_call_id: dict[str, str] = {}
@@ -355,8 +480,11 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             "id": new_uuid,
             "timestamp": now_iso(),
             "cwd": cwd,
+            # `originator` is intentionally distinct from native codex-tui /
+            # codex-exec values so converted rollouts are recognizable for
+            # debugging.
             "originator": "second-codex-handoff",
-            "cli_version": "0.0.0",
+            "cli_version": cli_version,
             "source": "cli",
             "model_provider": "openai",
             "base_instructions": {"text": "You are Codex, a coding agent.\n"},

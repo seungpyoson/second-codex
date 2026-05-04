@@ -205,6 +205,133 @@ grep -q "^new session UUID:" "$SANDBOX/wrap-cc2.out"
 echo "bash wrapper smoke tests PASSED"
 
 # ---------------------------------------------------------------------------
+# Round-trip A -> B -> A: a Codex session converts to Claude, then that
+# Claude session converts back to Codex. Content from the original turns
+# must survive both hops.
+# ---------------------------------------------------------------------------
+RT_CODEX_UUID="00000000-0000-7000-8000-000000000020"
+RT_CODEX="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-02-00-$RT_CODEX_UUID.jsonl"
+cat > "$RT_CODEX" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$RT_CODEX_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Round-trip marker text: pumpkin-orbit-7711","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Acknowledged the round-trip marker."}],"phase":"commentary"}}
+EOF
+
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$RT_CODEX_UUID" >"$SANDBOX/rt1.out" 2>&1
+RT_CLAUDE_UUID="$(grep '^new session UUID:' "$SANDBOX/rt1.out" | awk '{print $NF}')"
+
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$RT_CLAUDE_UUID" >"$SANDBOX/rt2.out" 2>&1
+RT_CODEX2_PATH="$(grep '^converted:' "$SANDBOX/rt2.out" | awk -F'-> ' '{print $2}')"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$RT_CODEX2_PATH") if l.strip()]
+joined = ""
+for r in records:
+    pl = r.get("payload", {})
+    pt = pl.get("type") if isinstance(pl, dict) else None
+    if pt == "user_message":
+        joined += pl.get("message", "")
+    elif pt == "message":
+        for b in pl.get("content", []):
+            if isinstance(b, dict) and b.get("type") == "output_text":
+                joined += b.get("text", "")
+assert "pumpkin-orbit-7711" in joined, "round-trip lost the user marker"
+assert "Acknowledged the round-trip marker" in joined, "round-trip lost the assistant turn"
+print("round-trip A->B->A PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# turn_aborted: response_items between task_started and turn_aborted must
+# be dropped on conversion (the source model treated them as abandoned).
+# ---------------------------------------------------------------------------
+TA_UUID="00000000-0000-7000-8000-000000000021"
+TA_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-03-00-$TA_UUID.jsonl"
+cat > "$TA_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TA_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"First user turn","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ABANDONED-CONTENT-DO-NOT-RECALL"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"turn_aborted"}
+{"timestamp":"2026-05-04T00:00:06.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-05-04T00:00:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"COMMITTED-RESPONSE-PUMPKIN"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:08.000Z","type":"event_msg","payload":{"type":"task_complete"}}
+EOF
+
+OUT="$SANDBOX/ta.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TA_UUID" >"$OUT" 2>&1
+TA_CLAUDE_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TA_CLAUDE_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TA_CLAUDE_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TA_CLAUDE_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "ABANDONED-CONTENT-DO-NOT-RECALL" not in joined, "abandoned content leaked into converted session"
+assert "COMMITTED-RESPONSE-PUMPKIN" in joined, "committed turn was wrongly dropped"
+print("turn_aborted handling PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# Atomicity: write_jsonl uses tmp+rename. The temp file should not exist
+# after a successful conversion, and the target file should be present.
+# ---------------------------------------------------------------------------
+TARGET_DIR="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)"
+LEFTOVERS="$(find "$TARGET_DIR" -name '*.tmp' 2>/dev/null | head -1)"
+if [ -n "$LEFTOVERS" ]; then
+    echo "FAIL: temp files left after successful conversions: $LEFTOVERS"
+    exit 1
+fi
+echo "atomic-write residue check PASSED"
+
+# ---------------------------------------------------------------------------
+# UUID validation: bare strings, partial UUIDs, and empty input must be
+# rejected with a clear error before any filesystem access.
+# ---------------------------------------------------------------------------
+if python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "" >"$SANDBOX/uuid-empty.out" 2>&1; then
+    echo "FAIL: empty UUID should be rejected"; exit 1
+fi
+grep -q "must be a full UUID" "$SANDBOX/uuid-empty.out"
+
+if python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "abcd" >"$SANDBOX/uuid-short.out" 2>&1; then
+    echo "FAIL: short UUID should be rejected"; exit 1
+fi
+grep -q "must be a full UUID" "$SANDBOX/uuid-short.out"
+echo "UUID validation PASSED"
+
+# ---------------------------------------------------------------------------
+# --help / --target-cwd via the bash wrapper.
+# ---------------------------------------------------------------------------
+"$REPO_ROOT/second-codex" handoff-to-claude --help >"$SANDBOX/help.out" 2>&1
+grep -q "^usage: second-codex handoff-to-claude" "$SANDBOX/help.out"
+
+# Use a fresh codex source for the --target-cwd test so we can assert the
+# converted Claude session lands under the override path.
+CT_UUID="00000000-0000-7000-8000-000000000022"
+CT_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-00-$CT_UUID.jsonl"
+cat > "$CT_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CT_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+
+OVERRIDE_CWD="/tmp/sandbox-override-target"
+mkdir -p "$CLAUDE_HOME/projects/$(printf %s "$OVERRIDE_CWD" | tr / -)"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  "$REPO_ROOT/second-codex" handoff-to-claude "$CT_UUID" --target-cwd "$OVERRIDE_CWD" >"$SANDBOX/ct.out" 2>&1
+CT_PRODUCED="$(grep '^converted:' "$SANDBOX/ct.out" | awk -F'-> ' '{print $2}')"
+case "$CT_PRODUCED" in
+    *"$(printf %s "$OVERRIDE_CWD" | tr / -)"*) : ;;
+    *) echo "FAIL: --target-cwd not honored: $CT_PRODUCED"; exit 1 ;;
+esac
+echo "wrapper --help / --target-cwd PASSED"
+
+# ---------------------------------------------------------------------------
 # Unmapped-tool fold: tool calls without a known cross-format mapping must
 # render as descriptive text rather than emit a function_call/tool_use the
 # receiver may reject as an unknown tool name.
