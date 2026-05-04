@@ -36,13 +36,13 @@ grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
 : > "$SANDBOX/helper.log"
 mkdir -p "$SANDBOX/shell-snapshots"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
-  zsh -c 'source "$1"; { typeset -f __second_codex_helper_dir __second_codex_should_print_session_hint __second_codex_session_hint codex second-codex; typeset -p SECOND_CODEX_SHELL_HELPER_DIR; } > "$2"' \
+  zsh -c 'source "$1"; { typeset -f -m "__second_codex_*" codex second-codex; typeset -p SECOND_CODEX_SHELL_HELPER_DIR; } > "$2"' \
     _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/snapshot.zsh"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/snapshot.zsh"
 grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
 
-zsh -c 'source "$1"; typeset -f __second_codex_helper_dir second-codex > "$2"' \
+zsh -c 'source "$1"; typeset -f -m "__second_codex_*" codex second-codex > "$2"' \
   _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/functions-only.zsh"
 if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/functions-only.zsh" \
   >"$SANDBOX/functions-only.out" 2>&1; then
