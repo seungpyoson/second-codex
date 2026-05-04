@@ -706,8 +706,13 @@ fi
 # history. Functional verification at scale; a loose 10s budget catches
 # a regression to a quadratic algorithm but is not a tight perf bound.
 # ---------------------------------------------------------------------------
-SCALE_SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/second-codex-scale.XXXXXX")"
-trap 'rm -rf "$SCALE_SANDBOX"' EXIT
+# Nest the scale dir inside $SANDBOX rather than mktemp'ing a sibling:
+# bash `trap ... EXIT` does not stack — installing a second EXIT trap
+# here would silently clobber the line-6 trap and leak $SANDBOX on
+# script exit. Putting scale data inside $SANDBOX lets the existing
+# trap clean both with one rm -rf. (Panel review of PR #7, 2026-05-04.)
+SCALE_SANDBOX="$SANDBOX/scale"
+mkdir -p "$SCALE_SANDBOX"
 SCALE_HOME="$SCALE_SANDBOX/home-second"
 mkdir -p "$SCALE_HOME/sessions"
 SCALE_TARGET_ID="019dee99-1006-7000-8000-deadbeefcafe"
@@ -788,5 +793,107 @@ if [[ "$SCALE_TOO_SLOW" == "1" ]]; then
   exit 1
 fi
 echo "session-id finds target across 200 noise sessions in ${SCALE_ELAPSED}s PASSED"
+
+# ---------------------------------------------------------------------------
+# session-id symlink-safe cwd compare (Gemini-CA review of PR #7):
+# Native Codex captures cwd via POSIX getcwd() so its rollouts store the
+# physical path (/private/tmp/foo on macOS). If a caller invokes
+# `second-codex session-id <symlinked-cwd>`, the pre-fix direct-equality
+# compare would never match. Pin: passing a symlinked cwd that resolves
+# to the rollout's recorded physical path returns the right session id.
+# ---------------------------------------------------------------------------
+SYMLINK_HOME="$SANDBOX/symlink/home-second"
+mkdir -p "$SYMLINK_HOME/sessions/2026/05/04"
+SYMLINK_TARGET_ID="019dee99-2007-7000-8000-cafebabefade"
+# Create an actual symlink: $SANDBOX/symlink/link points at /private/<...>.
+# The session is recorded under the realpath; we pass the symlinked path
+# to session-id and assert it still finds the target.
+SYMLINK_REAL_DIR="$SANDBOX/symlink/real-project"
+mkdir -p "$SYMLINK_REAL_DIR"
+SYMLINK_LINK_DIR="$SANDBOX/symlink/linked-project"
+ln -s "$SYMLINK_REAL_DIR" "$SYMLINK_LINK_DIR"
+SYMLINK_REAL_RESOLVED=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SYMLINK_LINK_DIR")
+python3 - "$SYMLINK_HOME" "$SYMLINK_TARGET_ID" "$SYMLINK_REAL_RESOLVED" <<'PY'
+import json
+import sys
+from pathlib import Path
+home = Path(sys.argv[1])
+target_id = sys.argv[2]
+real_cwd = sys.argv[3]
+target = home / "sessions/2026/05/04" / f"rollout-2026-05-04T00-00-00-{target_id}.jsonl"
+target.write_text(json.dumps({
+    "type": "session_meta",
+    "payload": {"id": target_id, "cwd": real_cwd},
+}) + "\n")
+(home / "history.jsonl").write_text(
+    json.dumps({"session_id": target_id, "ts": 1777800000, "text": "target"}) + "\n"
+)
+PY
+SYMLINK_OUT=$(SECOND_CODEX_SWITCH_ROOT="$SANDBOX/symlink-root" \
+  CODEX_A_HOME="$SANDBOX/symlink-home-a" \
+  SECOND_CODEX_HOME="$SYMLINK_HOME" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/symlink-shim" \
+  "$REPO_ROOT/second-codex" session-id --second "$SYMLINK_LINK_DIR" 2>&1)
+SYMLINK_RC=$?
+if [[ "$SYMLINK_RC" -ne 0 ]]; then
+  echo "FAIL session-id symlink compare exited rc=$SYMLINK_RC: $SYMLINK_OUT"
+  exit 1
+fi
+if ! grep -Fxq "$SYMLINK_TARGET_ID" <<<"$SYMLINK_OUT"; then
+  echo "FAIL session-id symlink compare returned wrong id: got '$SYMLINK_OUT', expected '$SYMLINK_TARGET_ID'"
+  exit 1
+fi
+echo "session-id resolves symlinked cwd against physical-path rollout PASSED"
+
+# ---------------------------------------------------------------------------
+# session-id session_id glob-safety guard (Greptile P2 review of PR #7):
+# The Python heredoc reads session_id from history.jsonl and substitutes
+# it into a glob pattern. A history entry with glob metacharacters
+# (`*`, `?`, `[`) would expand the glob unexpectedly. Pin: a malformed
+# history entry alongside a valid one still produces the valid session
+# (the malformed entry is dropped by the UUID-shape regex, not glob-
+# expanded against the corpus).
+# ---------------------------------------------------------------------------
+GLOB_HOME="$SANDBOX/glob-guard/home-second"
+mkdir -p "$GLOB_HOME/sessions/2026/05/04"
+GLOB_TARGET_ID="019dee99-3008-7000-8000-feedfacec0de"
+GLOB_TARGET_CWD="/tmp/glob-guard-project"
+# A real session for the legitimate target id.
+python3 - "$GLOB_HOME" "$GLOB_TARGET_ID" "$GLOB_TARGET_CWD" <<'PY'
+import json
+import sys
+from pathlib import Path
+home = Path(sys.argv[1])
+target_id = sys.argv[2]
+target_cwd = sys.argv[3]
+target = home / "sessions/2026/05/04" / f"rollout-2026-05-04T00-00-00-{target_id}.jsonl"
+target.write_text(json.dumps({
+    "type": "session_meta",
+    "payload": {"id": target_id, "cwd": target_cwd},
+}) + "\n")
+# History.jsonl with a malformed entry FIRST (most recent), then the
+# valid target. If the malformed entry weren't filtered, the glob would
+# attempt expansion against the corpus and likely error or miss-match.
+malformed_ids = ["*", "?-bogus", "[abc].not-a-uuid", "../../etc/passwd"]
+with (home / "history.jsonl").open("w") as f:
+    for bogus in malformed_ids:
+        f.write(json.dumps({"session_id": bogus, "ts": 1777800001, "text": "bogus"}) + "\n")
+    f.write(json.dumps({"session_id": target_id, "ts": 1777800000, "text": "target"}) + "\n")
+PY
+GLOB_OUT=$(SECOND_CODEX_SWITCH_ROOT="$SANDBOX/glob-root" \
+  CODEX_A_HOME="$SANDBOX/glob-home-a" \
+  SECOND_CODEX_HOME="$GLOB_HOME" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/glob-shim" \
+  "$REPO_ROOT/second-codex" session-id --second "$GLOB_TARGET_CWD" 2>&1)
+GLOB_RC=$?
+if [[ "$GLOB_RC" -ne 0 ]]; then
+  echo "FAIL session-id glob-guard exited rc=$GLOB_RC: $GLOB_OUT"
+  exit 1
+fi
+if ! grep -Fxq "$GLOB_TARGET_ID" <<<"$GLOB_OUT"; then
+  echo "FAIL session-id glob-guard returned wrong id: got '$GLOB_OUT', expected '$GLOB_TARGET_ID'"
+  exit 1
+fi
+echo "session-id rejects non-UUID history entries before glob expansion PASSED"
 
 echo "PASS handoff sandbox"

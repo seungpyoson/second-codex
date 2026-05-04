@@ -188,11 +188,18 @@ _VALID_CODEX_APPROVAL_POLICIES: frozenset[str] = frozenset({
     "untrusted", "on-request", "on-failure", "never",
 })
 # Codex turn_context.sandbox_policy.type enum (Codex uses `type` as the
-# tagged-union discriminator, NOT `mode` — pre-#6 converter wrote `mode`,
-# which Codex resume effectively ignores). Empirical scan: "workspace-write"
-# is the most common value, with "danger-full-access" and "read-only" also
-# observed. Conservative default is "read-only" so a converted session
-# never silently escalates filesystem access on resume.
+# tagged-union discriminator, NOT `mode`). Empirical scan of 4869 native
+# local Codex rollouts: every record uses `type`. The pre-#6 converter
+# wrote `mode`, an unrecognized field that does not match Codex's tagged-
+# union schema; whether `codex resume` silently drops the field, falls
+# back to a default policy, or refuses the rollout was not directly
+# measured (live-resume verification of the legacy emission was not run).
+# The schema fix is safe-by-construction: writing what 4869/4869 native
+# rollouts write removes an entire class of "unrecognized field" risk.
+# "workspace-write" is the most common value, with "danger-full-access"
+# and "read-only" also observed. Conservative default is "read-only" so
+# a converted session never silently escalates filesystem access on
+# resume.
 _VALID_CODEX_SANDBOX_TYPES: frozenset[str] = frozenset({
     "read-only", "workspace-write", "danger-full-access",
 })
@@ -200,7 +207,7 @@ _DEFAULT_CODEX_APPROVAL_POLICY: str = "on-request"
 _DEFAULT_CODEX_SANDBOX_TYPE: str = "read-only"
 
 
-def _build_codex_sandbox_policy(sandbox_type: str, cwd: str) -> dict[str, Any]:
+def _build_codex_sandbox_policy(sandbox_type: str, _cwd: str) -> dict[str, Any]:
     """Build the sandbox_policy dict Codex's resume parser expects.
 
     Codex represents sandbox_policy as a tagged union keyed on `type`. For
@@ -221,16 +228,13 @@ def _build_codex_sandbox_policy(sandbox_type: str, cwd: str) -> dict[str, Any]:
 
     `network_access`, `exclude_tmpdir_env_var`, `exclude_slash_tmp`
     default to `false` (most conservative — no network, no tmp
-    exclusions). `cwd` is the converted session's resolved cwd, retained
-    in the signature for callers that may want a non-default writable
-    root in the future.
+    exclusions). `_cwd` (underscore-prefixed) is intentionally unused in
+    the default — workspace-write makes cwd implicitly writable, so
+    redundant entries in writable_roots are unnecessary. Kept in the
+    signature for callers that may opt into a non-default writable root
+    set (e.g., `[cwd, ~/.codex/memories]`) in a future iteration.
     """
     if sandbox_type == "workspace-write":
-        # cwd is intentionally unused in the default — workspace-write
-        # makes cwd writable implicitly. Kept in the signature so a
-        # future flag can opt callers into `[cwd, ~/.codex/memories]` or
-        # similar without a signature change.
-        del cwd
         return {
             "type": "workspace-write",
             "writable_roots": [os.path.expanduser("~/.codex/memories")],
@@ -882,13 +886,15 @@ def claude_to_codex(
         raise ValueError("--target-cwd must not be empty or whitespace-only")
     if codex_approval_policy not in _VALID_CODEX_APPROVAL_POLICIES:
         raise ValueError(
-            f"--codex-approval-policy must be one of "
-            f"{sorted(_VALID_CODEX_APPROVAL_POLICIES)}; got {codex_approval_policy!r}"
+            f"codex_approval_policy (CLI: --codex-approval-policy) must be "
+            f"one of {sorted(_VALID_CODEX_APPROVAL_POLICIES)}; "
+            f"got {codex_approval_policy!r}"
         )
     if codex_sandbox_policy not in _VALID_CODEX_SANDBOX_TYPES:
         raise ValueError(
-            f"--codex-sandbox-policy must be one of "
-            f"{sorted(_VALID_CODEX_SANDBOX_TYPES)}; got {codex_sandbox_policy!r}"
+            f"codex_sandbox_policy (CLI: --codex-sandbox-policy) must be "
+            f"one of {sorted(_VALID_CODEX_SANDBOX_TYPES)}; "
+            f"got {codex_sandbox_policy!r}"
         )
     records = read_jsonl(src)
     if not records:

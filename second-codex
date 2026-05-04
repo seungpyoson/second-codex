@@ -663,13 +663,32 @@ latest_session_id_for_home() {
   fi
   python3 - "$home" "$cwd_filter" <<'PY'
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
 home = Path(sys.argv[1])
-cwd = sys.argv[2]
+# Resolve cwd to its physical path so cwd matching is symlink-safe.
+# Native Codex captures cwd via POSIX getcwd() which returns the physical
+# path on macOS — a session opened in /tmp/foo is recorded as
+# /private/tmp/foo. If a caller passes the symlinked path here, the
+# direct-equality compare at line ~743 would never match. realpath both
+# sides so the comparison is layout-agnostic. (Gemini-CA review of PR #7.)
+cwd_input = sys.argv[2]
+try:
+    cwd = os.path.realpath(cwd_input)
+except OSError:
+    cwd = cwd_input
 history = home / "history.jsonl"
 sessions = home / "sessions"
+# UUID-shape guard. session_id is read from history.jsonl and substituted
+# into the glob below; a metacharacter (`*`, `?`, `[`) would expand the
+# glob unexpectedly. Codex always writes UUIDs here, but defense-in-depth:
+# the bash wrapper validates UUIDs everywhere else (is_valid_session_id),
+# this is the one entry point that crosses into Python without that guard.
+# (Greptile P2 review of PR #7.)
+_SESSION_ID_RE = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
 if not history.is_file():
     print(f"second-codex could not find Codex history: {history}", file=sys.stderr)
     raise SystemExit(67)
@@ -708,6 +727,11 @@ for line in reversed(lines):
         continue
     if not session_id or session_id in seen:
         continue
+    # Drop anything that isn't a Codex UUID — protects the glob below
+    # from metacharacter expansion. A non-UUID entry in history.jsonl
+    # would never match a real rollout file anyway.
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
+        continue
     seen.add(session_id)
     recent_rank[session_id] = len(recent_rank)
 
@@ -740,7 +764,18 @@ try:
                         if item.get("type") != "session_meta":
                             continue
                         payload = item.get("payload") or {}
-                        if payload.get("cwd") != cwd or payload.get("id") != session_id:
+                        record_cwd = payload.get("cwd")
+                        # Symlink-safe cwd compare: the rollout's cwd
+                        # *should* already be physical (Codex uses
+                        # getcwd()), but realpath defensively in case a
+                        # converted/migrated rollout carries a symlinked
+                        # path. realpath of an already-physical path is a
+                        # no-op.
+                        try:
+                            record_cwd_real = os.path.realpath(record_cwd) if record_cwd else None
+                        except OSError:
+                            record_cwd_real = record_cwd
+                        if record_cwd_real != cwd or payload.get("id") != session_id:
                             break
                         best = session_id
                         break
