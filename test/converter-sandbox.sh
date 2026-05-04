@@ -29,7 +29,7 @@ CODEX_SRC_UUID="00000000-0000-7000-8000-00000000000a"
 CODEX_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-$CODEX_SRC_UUID.jsonl"
 cat > "$CODEX_SRC" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CODEX_SRC_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Show file count","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Counting now"}],"phase":"commentary"}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\",\"workdir\":\"$CWD\"}","call_id":"call_TESTfixed01"}}
@@ -219,7 +219,7 @@ RT_CODEX_UUID="00000000-0000-7000-8000-000000000020"
 RT_CODEX="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-02-00-$RT_CODEX_UUID.jsonl"
 cat > "$RT_CODEX" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$RT_CODEX_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Round-trip marker text: pumpkin-orbit-7711","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Acknowledged the round-trip marker."}],"phase":"commentary"}}
 EOF
@@ -258,7 +258,7 @@ TA_UUID="00000000-0000-7000-8000-000000000021"
 TA_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-03-00-$TA_UUID.jsonl"
 cat > "$TA_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TA_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"First user turn","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"task_started"}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ABANDONED-CONTENT-DO-NOT-RECALL"}],"phase":"commentary"}}
@@ -322,7 +322,7 @@ CT_UUID="00000000-0000-7000-8000-000000000022"
 CT_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-00-$CT_UUID.jsonl"
 cat > "$CT_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CT_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
 EOF
 
@@ -347,7 +347,7 @@ TJ_UUID="00000000-0000-7000-8000-000000000023"
 TJ_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-05-00-$TJ_UUID.jsonl"
 cat > "$TJ_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TJ_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"User turn","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"task_started"}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"TOPLEVEL-ABANDONED-DO-NOT-RECALL"}],"phase":"commentary"}}
@@ -380,7 +380,7 @@ TH_UUID="00000000-0000-7000-8000-000000000024"
 TH_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-06-00-$TH_UUID.jsonl"
 cat > "$TH_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TH_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"unicode marker 🍊 漢字 ✅","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"echo back: 🍊 漢字 ✅"}],"phase":"commentary"}}
 EOF
@@ -443,7 +443,7 @@ CODEX_UNMAPPED_UUID="00000000-0000-7000-8000-00000000000d"
 CODEX_UNMAPPED="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-01-00-$CODEX_UNMAPPED_UUID.jsonl"
 cat > "$CODEX_UNMAPPED" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CODEX_UNMAPPED_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Search the web","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"web_search_call","arguments":"{\"query\":\"hello\"}","call_id":"call_UNMAPPED1"}}
 {"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_UNMAPPED1","output":"hello world"}}
@@ -516,7 +516,7 @@ TK_UUID="00000000-0000-7000-8000-000000000026"
 TK_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-08-00-$TK_UUID.jsonl"
 cat > "$TK_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TK_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"User turn","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"task_started"}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"NESTED-ABANDONED-DO-NOT-RECALL"}],"phase":"commentary"}}
@@ -551,7 +551,7 @@ TL_UUID="00000000-0000-7000-8000-000000000027"
 TL_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-09-00-$TL_UUID.jsonl"
 cat > "$TL_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TL_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"locale test 🌶 漢字","images":[],"local_images":[],"text_elements":[]}}
 EOF
 
@@ -589,7 +589,7 @@ TN_UUID="00000000-0000-7000-8000-000000000028"
 TN_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-10-00-$TN_UUID.jsonl"
 cat > "$TN_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TN_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
 EOF
 
@@ -679,7 +679,7 @@ TQ_UUID="00000000-0000-7000-8000-000000000029"
 TQ_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-11-00-$TQ_UUID.jsonl"
 cat > "$TQ_PATH" <<EOF
 {"timestamp":"2020-06-15T12:00:00.000Z","type":"session_meta","payload":{"id":"$TQ_UUID","timestamp":"2020-06-15T12:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2020-06-15T12:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2020-06-15T12:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2020-06-15T12:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"timestamp marker","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2020-06-15T12:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply marker"}],"phase":"commentary"}}
 EOF
@@ -784,7 +784,7 @@ TT_UUID="00000000-0000-7000-8000-00000000002c"
 TT_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-13-00-$TT_UUID.jsonl"
 cat > "$TT_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TT_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Apply the patch","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_CTC01","name":"apply_patch","input":"*** Begin Patch\n*** Update File: foo.txt\n@@\n-old line\n+CTC-PATCH-MARKER-PUMPKIN\n*** End Patch"}}
 {"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_CTC01","output":"CTC-OUTPUT-MARKER-RUTABAGA"}}
@@ -822,7 +822,7 @@ TU_UUID="00000000-0000-7000-8000-00000000002d"
 TU_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-14-00-$TU_UUID.jsonl"
 cat > "$TU_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TU_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Search","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"web_search_call","status":"completed","action":{"type":"search","query":"WSC-MARKER-CHESTNUT","queries":["WSC-MARKER-CHESTNUT"]}}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://docs.example.com/wsc-page"}}}
@@ -855,7 +855,7 @@ TV_UUID="00000000-0000-7000-8000-00000000002e"
 TV_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-15-00-$TV_UUID.jsonl"
 cat > "$TV_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TV_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"newly_invented_codex_type_zzz","detail":"future schema"}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"event_msg","payload":{"type":"reasoning","summary":"intentional drop"}}
@@ -891,7 +891,7 @@ TW_UUID="00000000-0000-7000-8000-00000000002f"
 TW_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-16-00-$TW_UUID.jsonl"
 cat > "$TW_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TW_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"hi","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"agent_message","message":"AM-MARKER-INTERMEDIATE"}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"AM-MARKER-FINAL"}}
@@ -1110,7 +1110,7 @@ TCC_UUID="00000000-0000-7000-8000-000000000032"
 TCC_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-19-00-$TCC_UUID.jsonl"
 cat > "$TCC_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TCC_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"call abandoned","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_NEVER_SEEN","output":"ORPHAN-OUTPUT-MARKER-PERIWINKLE"}}
 EOF
@@ -1145,7 +1145,7 @@ TDD_UUID="00000000-0000-7000-8000-000000000033"
 TDD_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-20-00-$TDD_UUID.jsonl"
 cat > "$TDD_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TDD_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
-{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
 {"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"empty-id corruption","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"","name":"corrupt_call","input":"EMPTYID-CALL-INPUT-MARMALADE"}}
 {"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"","output":"EMPTYID-OUTPUT-MARKER-CILANTRO"}}
