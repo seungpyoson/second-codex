@@ -392,7 +392,12 @@ TH_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
 TH_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TH_NEW_UUID.jsonl"
 
 # Bytes on disk must be the unescaped UTF-8, not \uXXXX escape sequences.
-if grep -q '\\\\u' "$TH_NEW_PATH"; then
+# Pattern is one literal backslash + 'u' + 4 hex digits to match JSON's
+# \uXXXX escape form in the raw file bytes. The earlier '\\\\u' form was
+# four backslashes which after BRE collapse matched '\\u' (two
+# backslashes + u) — a double-escaped form that json.dumps never emits,
+# so the assertion was vacuously failing to fire even when escapes leaked.
+if grep -q '\\u[0-9a-fA-F]\{4\}' "$TH_NEW_PATH"; then
     echo "FAIL: unicode escapes leaked into converted session ($TH_NEW_PATH)"
     exit 1
 fi
