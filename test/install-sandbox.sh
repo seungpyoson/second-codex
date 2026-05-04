@@ -39,8 +39,17 @@ SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -c 'source "$1"; { typeset -f __second_codex_helper_dir __second_codex_should_print_session_hint __second_codex_session_hint codex second-codex; typeset -p SECOND_CODEX_SHELL_HELPER_DIR; } > "$2"' \
     _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/snapshot.zsh"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
-  zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/snapshot.zsh"
+  env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/snapshot.zsh"
 grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
+
+zsh -c 'source "$1"; typeset -f __second_codex_helper_dir second-codex > "$2"' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/functions-only.zsh"
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/functions-only.zsh" \
+  >"$SANDBOX/functions-only.out" 2>&1; then
+  echo "FAIL function-only shell snapshot unexpectedly resolved helper dir"
+  exit 1
+fi
+grep -Fq "SECOND_CODEX_SHELL_HELPER_DIR is not set" "$SANDBOX/functions-only.out"
 
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/codex" <<'SH'

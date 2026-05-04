@@ -1,14 +1,15 @@
 # Codex second account convenience command.
 # Primary ~/.codex remains the source of truth for settings/environment.
-__second_codex_source_path="${(%):-%x}"
-# Claude/Codex shell snapshots serialize functions into snapshot files. A
-# call-time %x expansion then points at the snapshot, so capture the install
-# directory as exported data at source time where snapshots can preserve it.
-typeset -gx SECOND_CODEX_SHELL_HELPER_DIR="${__second_codex_source_path:A:h}"
-unset __second_codex_source_path
+() {
+  local source_path="${(%):-%x}"
+  # Claude/Codex shell snapshots serialize functions into snapshot files. A
+  # call-time %x expansion then points at the snapshot, so capture the install
+  # directory as exported data at source time where snapshots can preserve it.
+  typeset -gx SECOND_CODEX_SHELL_HELPER_DIR="${source_path:A:h}"
+}
 
 __second_codex_helper_dir() {
-  printf '%s\n' "$SECOND_CODEX_SHELL_HELPER_DIR"
+  printf '%s\n' "${SECOND_CODEX_SHELL_HELPER_DIR:?SECOND_CODEX_SHELL_HELPER_DIR is not set}"
 }
 
 __second_codex_should_print_session_hint() {
