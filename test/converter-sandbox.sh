@@ -166,4 +166,41 @@ for r in records:
 print("claude-to-codex structural test PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# Bash wrapper smoke tests: exercise the second-codex subcommands.
+# ---------------------------------------------------------------------------
+
+# usage / arg-parsing tests do not need the converter to run.
+"$REPO_ROOT/second-codex" handoff-to-claude >"$SANDBOX/usage1.out" 2>&1 && {
+  echo "FAIL handoff-to-claude with no args should fail"; exit 1; }
+grep -q "^usage: second-codex handoff-to-claude" "$SANDBOX/usage1.out"
+
+"$REPO_ROOT/second-codex" handoff-from-claude >"$SANDBOX/usage2.out" 2>&1 && {
+  echo "FAIL handoff-from-claude with no args should fail"; exit 1; }
+grep -q "^usage: second-codex handoff-from-claude" "$SANDBOX/usage2.out"
+
+"$REPO_ROOT/second-codex" handoff-to-claude bogus-id >"$SANDBOX/usage3.out" 2>&1 && {
+  echo "FAIL malformed session id should be rejected"; exit 1; }
+grep -q "refused malformed session id" "$SANDBOX/usage3.out"
+
+"$REPO_ROOT/second-codex" handoff-to-claude --bad-flag >"$SANDBOX/usage4.out" 2>&1 && {
+  echo "FAIL flag-shaped arg should be rejected"; exit 1; }
+grep -q "^usage: second-codex handoff-to-claude" "$SANDBOX/usage4.out"
+
+# python3-missing path: helper must surface a clear error without crashing.
+SECOND_CODEX_TEST_DISABLE_PYTHON3=1 \
+  "$REPO_ROOT/second-codex" handoff-to-claude "$CODEX_SRC_UUID" >"$SANDBOX/no-python.out" 2>&1 && {
+  echo "FAIL handoff-to-claude should refuse to run without python3"; exit 1; }
+grep -q "requires python3" "$SANDBOX/no-python.out"
+
+# Round-trip via the bash wrapper using the sandbox CODEX_HOME / CLAUDE_HOME.
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  "$REPO_ROOT/second-codex" handoff-to-claude "$CODEX_SRC_UUID" >"$SANDBOX/wrap-c2c.out" 2>&1
+grep -q "^new session UUID:" "$SANDBOX/wrap-c2c.out"
+
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  "$REPO_ROOT/second-codex" handoff-from-claude "$CLAUDE_SRC_UUID" >"$SANDBOX/wrap-cc2.out" 2>&1
+grep -q "^new session UUID:" "$SANDBOX/wrap-cc2.out"
+
+echo "bash wrapper smoke tests PASSED"
 echo "all converter sandbox tests passed"

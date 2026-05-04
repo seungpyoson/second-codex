@@ -86,6 +86,29 @@ codex exec resume <session_id>
 
 The resumed session uses the primary Codex account/provider because it is launched through `codex`, not `second-codex`.
 
+### Cross-tool handoff (Codex ↔ Claude Code)
+
+To continue a Codex session inside Claude Code, or a Claude Code session inside Codex, use the cross-tool converters. They translate the session into the receiving tool's native format and write it at the canonical session storage path so the receiver's native resume command picks it up.
+
+```bash
+# Started in Codex, want to continue in Claude Code:
+second-codex handoff-to-claude <codex_session_id>
+# Output prints the new Claude session UUID and the resume command.
+claude --resume <new_uuid>
+
+# Started in Claude Code, want to continue in Codex:
+second-codex handoff-from-claude <claude_session_id>
+codex resume <new_uuid>
+```
+
+What is preserved: text turns, tool calls and results (with linkage), `cwd` context.
+
+What is dropped on cross-vendor: reasoning / thinking blocks (vendor-issued cryptographic signatures cannot round-trip), Claude Code hook attachment records, file-history-snapshot records.
+
+Tool taxonomy is mapped where possible (e.g. Claude `Bash` ↔ Codex `exec_command`); unmapped tools pass their name through unchanged and may render as raw arguments on the receiving side.
+
+Both converters require `python3`. The receiver's native resume validates schema; an unrecognized rollout is rejected without side effects on the source session.
+
 ## Security Notes
 
 - `second-codex` is account/config isolation, not an OS security sandbox.

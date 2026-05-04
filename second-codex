@@ -1173,6 +1173,67 @@ resume_second_interactive=second-codex resume $session_id
 EOF
 }
 
+run_session_converter() {
+  # Internal helper for handoff-to-claude / handoff-from-claude.
+  # $1 = converter direction (codex-to-claude | claude-to-codex)
+  # $2 = subcommand name (for error messages)
+  # remaining args are forwarded after the session id is parsed
+  local direction="$1"
+  local cmd_name="$2"
+  shift 2
+
+  local session_id=""
+  while (( $# > 0 )); do
+    case "$1" in
+      -*)
+        echo "usage: second-codex $cmd_name <session-id>" >&2
+        return 64
+        ;;
+      *)
+        if [[ -n "$session_id" ]]; then
+          echo "usage: second-codex $cmd_name <session-id>" >&2
+          return 64
+        fi
+        session_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$session_id" ]]; then
+    echo "usage: second-codex $cmd_name <session-id>" >&2
+    return 64
+  fi
+
+  if ! is_valid_session_id "$session_id"; then
+    echo "second-codex refused malformed session id: $session_id" >&2
+    return 64
+  fi
+
+  if [[ "${SECOND_CODEX_TEST_DISABLE_PYTHON3:-0}" == "1" ]] || ! command -v python3 >/dev/null 2>&1; then
+    echo "second-codex $cmd_name requires python3" >&2
+    return 70
+  fi
+
+  local script_dir converter
+  script_dir="$(dirname "$WRAPPER_PATH")"
+  converter="$script_dir/lib/session_convert.py"
+  if [[ ! -f "$converter" ]]; then
+    echo "second-codex: converter script missing: $converter" >&2
+    return 70
+  fi
+
+  python3 "$converter" "$direction" "$session_id"
+}
+
+handoff_to_claude() {
+  run_session_converter codex-to-claude handoff-to-claude "$@"
+}
+
+handoff_from_claude() {
+  run_session_converter claude-to-codex handoff-from-claude "$@"
+}
+
 session_hint() {
   local account="${1:-}"
   local cwd_filter="${2:-}"
@@ -1392,6 +1453,16 @@ main() {
       shift
       guard_manifest_homes
       handoff_session "$@"
+      return
+      ;;
+    handoff-to-claude)
+      shift
+      handoff_to_claude "$@"
+      return
+      ;;
+    handoff-from-claude)
+      shift
+      handoff_from_claude "$@"
       return
       ;;
     session-id)
