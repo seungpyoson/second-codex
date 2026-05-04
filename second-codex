@@ -356,6 +356,15 @@ classify_known_command() {
   fi
 
   if token_is_setup_command "$command"; then
+    # Bash 3.2 nounset class-of-problem guard (see classify_command).
+    # Empirical: the inner `local setup_args=("$@")` does not crash today
+    # for `second-codex <setup>` no-subarg invocations because `$@` was set
+    # by the outer caller before shift. Guard kept for defense-in-depth and
+    # symmetry with the other three sites — fall-through default is `reroute`.
+    if (( $# == 0 )); then
+      echo reroute
+      return
+    fi
     local subcommand="" marketplace_subcommand="" after_separator=0
     local setup_args=("$@")
     local j=0

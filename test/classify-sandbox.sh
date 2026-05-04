@@ -207,4 +207,26 @@ if (( empty_args_rc != 0 )); then
 fi
 assert_grep "^home=$SANDBOX/home-second args=$" "$SANDBOX/codex.log"
 
+# Regression guard: setup commands with no sub-args hit the same bash 3.2
+# nounset path inside classify_known_command (`local setup_args=("$@")` after
+# `shift`). `second-codex mcp` must reroute cleanly without unbound variable.
+: > "$SANDBOX/codex.log"
+setup_no_subargs_out="$SANDBOX/setup-no-subargs.out"
+set +e
+run_wrapper mcp >"$setup_no_subargs_out" 2>&1
+setup_no_subargs_rc=$?
+set -e
+if grep -q "unbound variable" "$setup_no_subargs_out"; then
+  echo "FAIL second-codex mcp errored with unbound variable" >&2
+  cat "$setup_no_subargs_out" >&2
+  exit 1
+fi
+if (( setup_no_subargs_rc != 0 )); then
+  echo "FAIL second-codex mcp exited $setup_no_subargs_rc" >&2
+  cat "$setup_no_subargs_out" >&2
+  exit 1
+fi
+assert_grep "rerouting environment/config change" "$setup_no_subargs_out"
+assert_grep "^home=$SANDBOX/home-a args=mcp$" "$SANDBOX/codex.log"
+
 echo "PASS classify sandbox"
