@@ -5,7 +5,7 @@
   # Claude/Codex shell snapshots serialize functions into snapshot files. A
   # call-time %x expansion then points at the snapshot, so embed the install
   # directory into the helper function body at source time.
-  if [[ -f "$source_path" && "$source_path" != /dev/stdin && "$source_path" != /dev/fd/* ]]; then
+  if [[ -f "$source_path" && "${source_path:t}" == "second-codex-shell.zsh" ]]; then
     local helper_dir="${source_path:A:h}"
     eval "__second_codex_helper_dir() { printf '%s\\n' ${(qqq)helper_dir}; }"
   elif ! (( $+functions[__second_codex_helper_dir] )); then
