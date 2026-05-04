@@ -51,6 +51,22 @@ if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login 
 fi
 grep -Fq "SECOND_CODEX_SHELL_HELPER_DIR is not set" "$SANDBOX/functions-only.out"
 
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'cd "$2"; eval "$(cat "$1")"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$REPO_ROOT"; then
+  :
+else
+  echo "FAIL eval-sourced helper exported an invalid helper dir"
+  exit 1
+fi
+
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source /dev/stdin < "$1"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh"; then
+  :
+else
+  echo "FAIL stdin-sourced helper exported an invalid helper dir"
+  exit 1
+fi
+
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/codex" <<'SH'
 #!/usr/bin/env bash

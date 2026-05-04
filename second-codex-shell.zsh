@@ -5,7 +5,11 @@
   # Claude/Codex shell snapshots serialize functions into snapshot files. A
   # call-time %x expansion then points at the snapshot, so capture the install
   # directory as exported data at source time where snapshots can preserve it.
-  typeset -gx SECOND_CODEX_SHELL_HELPER_DIR="${source_path:A:h}"
+  if [[ -f "$source_path" && "$source_path" != /dev/stdin && "$source_path" != /dev/fd/* ]]; then
+    typeset -gx SECOND_CODEX_SHELL_HELPER_DIR="${source_path:A:h}"
+  else
+    unset SECOND_CODEX_SHELL_HELPER_DIR
+  fi
 }
 
 __second_codex_helper_dir() {
