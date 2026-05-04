@@ -356,9 +356,9 @@ classify_known_command() {
   fi
 
   if token_is_setup_command "$command"; then
-    # Defense-in-depth for the bash 3.2 nounset class in classify_command:
-    # count-first loops using `${#setup_args[@]}` are safe today, so this
-    # fall-through guard is a tripwire for future value-expansion refactors.
+    # Callers pass `command`; this guard covers a setup command whose sub-arg
+    # tail is empty after `shift`. The count-first loop is safe today, and the
+    # early return documents the existing no-subcommand reroute default.
     if (( $# == 0 )); then
       echo reroute
       return
@@ -1023,9 +1023,9 @@ EOF
 }
 
 find_session_id_after_resume_command() {
-  # Defense-in-depth for the bash 3.2 nounset class in classify_command:
-  # this count-first loop is safe today, but the guard preserves the existing
-  # fall-through if a future refactor introduces empty-array value expansion.
+  # A resume command can leave an empty tail for session-id discovery. The
+  # count-first loop is safe today, and the early return documents the existing
+  # "no session id found" default.
   if (( $# == 0 )); then
     return 1
   fi
@@ -1077,9 +1077,9 @@ find_session_id_after_resume_command() {
 }
 
 find_resume_session_arg() {
-  # Defense-in-depth for the bash 3.2 nounset class in classify_command:
-  # this count-first loop is safe today, but the guard preserves the existing
-  # fall-through if a future refactor introduces empty-array value expansion.
+  # Plain `resume` can call this with an empty argument list. The count-first
+  # loop is safe today, and the early return documents the existing "no session
+  # id found" default.
   if (( $# == 0 )); then
     return 1
   fi
