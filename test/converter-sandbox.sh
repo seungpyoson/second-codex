@@ -1319,13 +1319,236 @@ set -e
 case "$HH_STDERR" in
     *"--target-cwd must not be an empty string"*)
         [ "$HH_RC" -ne 0 ] || { echo "FAIL: empty --target-cwd accepted by Python entry point"; exit 1; }
-        echo "Python-side empty --target-cwd rejection PASSED"
         ;;
     *)
-        echo "FAIL: expected empty-target-cwd ValueError, got rc=$HH_RC stderr=$HH_STDERR"
+        echo "FAIL: expected empty-target-cwd ValueError (codex-to-claude), got rc=$HH_RC stderr=$HH_STDERR"
         exit 1
         ;;
 esac
+# claude-to-codex direction parity check (review-#9 internal: round-8 only
+# tested codex-to-claude; this exercises the mirror code path that round 8
+# also added the guard to).
+HH_CLAUDE_SRC_UUID="00000000-0000-4000-8000-deadbeef00cd"
+HH_CLAUDE_SRC="$CLAUDE_HOME/projects/$ENCODED_CWD/$HH_CLAUDE_SRC_UUID.jsonl"
+python3 - "$HH_CLAUDE_SRC" "$HH_CLAUDE_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"type":"user","uuid":"u1","parentUuid":None,"sessionId":uuid_,"cwd":cwd,"version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":False,
+     "message":{"role":"user","content":"hi"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+set +e
+HH_C2C_STDERR=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$HH_CLAUDE_SRC_UUID" --target-cwd "" 2>&1 >/dev/null)
+HH_C2C_RC=$?
+set -e
+case "$HH_C2C_STDERR" in
+    *"--target-cwd must not be an empty string"*)
+        [ "$HH_C2C_RC" -ne 0 ] || { echo "FAIL: empty --target-cwd accepted by claude-to-codex entry"; exit 1; }
+        echo "Python-side empty --target-cwd rejection (both directions) PASSED"
+        ;;
+    *)
+        echo "FAIL: expected empty-target-cwd ValueError (claude-to-codex), got rc=$HH_C2C_RC stderr=$HH_C2C_STDERR"
+        exit 1
+        ;;
+esac
+
+# ---------------------------------------------------------------------------
+# II (review-#9 internal): mirror of GG. Round 8 promoted pending_start
+# scalar to a stack to handle nested task_started; GG covers the
+# "inner aborts, outer completes" path. This scenario covers the OTHER
+# stack code path: "inner completes, outer aborts" — verifying the
+# task_complete pop AND a later turn_aborted's pop on the outer index
+# both work as intended. Without scenario II, half the stack's behavior
+# is structurally unexercised by tests.
+# ---------------------------------------------------------------------------
+II_SRC_UUID="019dee99-aabb-7000-8000-deadbeef0011"
+II_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${II_SRC_UUID}.jsonl"
+python3 - "$II_SRC" "$II_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+def msg(t, ts):
+    return {"timestamp":ts,"type":"response_item",
+            "payload":{"type":"message","role":"assistant",
+                       "content":[{"type":"output_text","text":t}],"phase":"commentary"}}
+def life(kind, ts):
+    return {"timestamp":ts,"type":"event_msg","payload":{"type":kind}}
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+    msg("OUTER-DOOMED-PRE", "2026-05-04T00:00:01.000Z"),
+    life("task_started",  "2026-05-04T00:00:02.000Z"),  # outer
+    msg("OUTER-DOOMED-PRE-INNER", "2026-05-04T00:00:03.000Z"),
+    life("task_started",  "2026-05-04T00:00:04.000Z"),  # inner
+    msg("INNER-OK-CONTENT", "2026-05-04T00:00:05.000Z"),
+    life("task_complete", "2026-05-04T00:00:06.000Z"),  # inner completes cleanly
+    msg("OUTER-DOOMED-POST-INNER", "2026-05-04T00:00:07.000Z"),
+    life("turn_aborted",  "2026-05-04T00:00:08.000Z"),  # aborts outer
+    msg("OUTER-AFTER-ABORT-NEW-TURN", "2026-05-04T00:00:09.000Z"),
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+II_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$II_SRC_UUID")
+II_NEW_PATH=$(echo "$II_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$II_NEW_PATH" <<'EOF'
+import json, sys
+records = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+joined = "\n".join(
+    b.get("text","")
+    for r in records
+    for b in r.get("message",{}).get("content",[])
+    if isinstance(b, dict)
+)
+# Outer-task content (between outer task_started and turn_aborted) must
+# be filtered. This includes content emitted both before the inner
+# task_started ('OUTER-DOOMED-PRE-INNER') AND after the inner's clean
+# task_complete ('OUTER-DOOMED-POST-INNER'). The inner that completed
+# cleanly is conceptually inside the outer, so its content is also
+# filtered when the outer aborts — this is the strict semantic of
+# nested task abortion.
+for gone in ("OUTER-DOOMED-PRE-INNER", "OUTER-DOOMED-POST-INNER",
+             "INNER-OK-CONTENT"):
+    assert gone not in joined, \
+        f"outer-aborted nested content {gone!r} leaked: {joined!r}"
+# Content emitted BEFORE the outer task_started survives (it's not in
+# any task scope — pre-task narrative).
+assert "OUTER-DOOMED-PRE" in joined, \
+    f"pre-task content lost: {joined!r}"
+# Content emitted AFTER the outer's turn_aborted survives — that's a
+# new turn's content, not part of the aborted task.
+assert "OUTER-AFTER-ABORT-NEW-TURN" in joined, \
+    f"post-abort content lost: {joined!r}"
+print("nested task_complete + outer turn_aborted filters outer scope PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# JJ (review-#9 internal, Gemini round-8 GAP): structural multi-hop
+# A->B->A->B stability test. The fold-to-text branches for unmapped tools
+# write narrative like "[Used Codex tool 'web_search_call' with arguments:
+# ...]" into a message/content text block. On a second hop, that text is
+# re-read as plain user/assistant text (NOT re-parsed as a tool call),
+# so the prefix should NOT stack ("[Used Codex tool ... [Used Codex tool
+# ...]]"). This pin asserts the property on synthetic input across 4 hops.
+# ---------------------------------------------------------------------------
+JJ_CODEX_UUID="019dee99-ccdd-7000-8000-deadbeef0022"
+JJ_CODEX_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${JJ_CODEX_UUID}.jsonl"
+python3 - "$JJ_CODEX_SRC" "$JJ_CODEX_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+    # An UNMAPPED tool call (web_search_call) that will fold to text
+    # on every cross-vendor conversion.
+    {"timestamp":"2026-05-04T00:00:01.000Z","type":"response_item","payload":{"type":"web_search_call","id":"ws_jj","status":"completed","action":{"type":"search","query":"JJ-MULTIHOP-MARKER-NUTMEG"}}},
+    {"timestamp":"2026-05-04T00:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final answer"}],"phase":"commentary"}},
+]
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+# Hop 1: codex -> claude
+JJ_H1_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$JJ_CODEX_UUID")
+JJ_H1_UUID=$(echo "$JJ_H1_OUT" | awk '/^new session UUID:/ {print $NF}')
+# Hop 2: claude -> codex
+JJ_H2_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$JJ_H1_UUID")
+JJ_H2_UUID=$(echo "$JJ_H2_OUT" | awk '/^new session UUID:/ {print $NF}')
+# Hop 3: codex -> claude
+JJ_H3_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$JJ_H2_UUID")
+JJ_H3_UUID=$(echo "$JJ_H3_OUT" | awk '/^new session UUID:/ {print $NF}')
+# Hop 4: claude -> codex
+JJ_H4_OUT=$(CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$JJ_H3_UUID")
+JJ_H4_UUID=$(echo "$JJ_H4_OUT" | awk '/^new session UUID:/ {print $NF}')
+JJ_H4_PATH=$(echo "$JJ_H4_OUT" | awk -F'-> ' '/^converted:/ {print $2}')
+python3 - "$JJ_H4_PATH" <<'EOF'
+import json, sys
+content_text_chunks = []
+for line in open(sys.argv[1]):
+    if not line.strip(): continue
+    r = json.loads(line)
+    if r.get("type") == "response_item":
+        p = r.get("payload", {})
+        if p.get("type") == "message":
+            for b in p.get("content", []):
+                if isinstance(b, dict):
+                    content_text_chunks.append(b.get("text", ""))
+all_text = "\n".join(content_text_chunks)
+# The marker survives 4 hops because it's embedded in the fold-to-text.
+assert "JJ-MULTIHOP-MARKER-NUTMEG" in all_text, \
+    f"multi-hop content loss: {all_text!r}"
+# Critical stability property: the [Used Codex tool ...] prefix appears
+# at most ONCE per chunk, even across 4 hops. If prefixes stacked we'd
+# see "[Used Codex tool 'web_search_call' ... [Used Codex tool ...".
+nested_prefix = all_text.count("[Used Codex tool")
+double_nested = "[Used Codex tool" + " " * 0 + " " in all_text and \
+                all_text.find("[Used Codex tool", all_text.find("[Used Codex tool") + 1) != -1 and \
+                all_text.find("[Used Codex tool", all_text.find("[Used Codex tool") + 1) < all_text.find("]")
+# Simpler: assert no chunk has two "[Used Codex tool" before its closing "]".
+for chunk in content_text_chunks:
+    if "[Used Codex tool" in chunk:
+        # Find first occurrence and the closing bracket; if a second
+        # "[Used Codex tool" lives before the closing, that's stacking.
+        first = chunk.find("[Used Codex tool")
+        close = chunk.find("]", first)
+        between = chunk[first + 1: close if close != -1 else len(chunk)]
+        assert "[Used Codex tool" not in between, \
+            f"fold prefix stacked across hops: {chunk!r}"
+print("multi-hop A->B->A->B fold-to-text stability PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# KK (review-#9 internal, DeepSeek/Kimi round-8 POLISH): _warn_unknown
+# dedupe is per-(category, kind) and uncapped. A pathological future
+# schema with many distinct unknown kinds could flood stderr — this test
+# pins the contract: N distinct unknown kinds emit at most N warnings
+# total (one per kind), and the converter completes successfully.
+# ---------------------------------------------------------------------------
+KK_SRC_UUID="019dee99-eeff-7000-8000-deadbeef0033"
+KK_SRC="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-00-00-${KK_SRC_UUID}.jsonl"
+python3 - "$KK_SRC" "$KK_SRC_UUID" "$CWD" <<'PY'
+import json, sys
+src, uuid_, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+records = [
+    {"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":uuid_,"timestamp":"2026-05-04T00:00:00.000Z","cwd":cwd,"originator":"codex","cli_version":"0.0.0-test","source":"cli","model_provider":"openai","base_instructions":{"text":"x"}}},
+]
+# 50 distinct unknown event_msg payload types.
+for i in range(50):
+    records.append({"timestamp":f"2026-05-04T00:00:{i+1:02d}.000Z","type":"event_msg","payload":{"type":f"future_kind_kk_{i:03d}"}})
+# Plus 50 duplicates of one of them (to verify dedupe works at scale).
+for i in range(50):
+    records.append({"timestamp":f"2026-05-04T00:01:{i:02d}.000Z","type":"event_msg","payload":{"type":"future_kind_kk_000"}})
+records.append({"timestamp":"2026-05-04T00:02:00.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}],"phase":"commentary"}})
+with open(src,"w",encoding="utf-8") as f:
+    for r in records: f.write(json.dumps(r)+"\n")
+PY
+KK_STDERR_FILE="$SANDBOX/kk_stderr.txt"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$KK_SRC_UUID" \
+    >/dev/null 2>"$KK_STDERR_FILE"
+python3 - "$KK_STDERR_FILE" <<'EOF'
+import sys
+err = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+warning_lines = [l for l in err.splitlines() if "unhandled event_msg.payload type" in l]
+# 50 distinct kinds + 50 duplicates of kind_000 = 50 unique warnings.
+assert len(warning_lines) == 50, \
+    f"expected 50 dedupe'd warnings, got {len(warning_lines)}:\n{err}"
+# Each warning is for a distinct kind (no duplicates).
+kinds = set()
+for line in warning_lines:
+    for i in range(50):
+        marker = f"future_kind_kk_{i:03d}"
+        if marker in line:
+            kinds.add(marker)
+            break
+assert len(kinds) == 50, f"warning kinds not all distinct: {kinds}"
+print("unknown-type dedupe scales to many distinct kinds PASSED")
+EOF
 
 
 echo "all converter sandbox tests passed"

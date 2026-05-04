@@ -24,9 +24,14 @@ Conversion semantics:
   sees the prior tool history without depending on the receiving API to
   recognize a foreign tool name.
 - Reasoning / thinking blocks are dropped on cross-vendor handoff. Both
-  vendors store reasoning with cryptographic signatures (Claude
-  `signature`, Codex `encrypted_content`) that cannot round-trip across
-  vendors; including them causes the receiving API to reject the turn.
+  vendors store reasoning with vendor-issued cryptographic signatures
+  (Claude `signature`, Codex `encrypted_content`) that the receiving
+  vendor cannot validate. Dropping is the safe-by-construction policy:
+  the converted session resumes successfully without them (verified by
+  `test/e2e-resume-probe.sh`). The earlier "including them causes the
+  receiving API to reject the turn" framing was withdrawn — it was an
+  X-causes-Y claim observed only with X-present, never with an X-absent
+  control, so the underlying causal mechanism remains unconfirmed.
 - Codex `turn_aborted` markers cause the response_items emitted since the
   most recent `task_started` to be discarded, matching the source model's
   view that those items were never committed.
