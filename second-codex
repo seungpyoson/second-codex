@@ -275,7 +275,7 @@ option_is_auth_mutation() {
   case "$1" in
     --login|--login=*|--logout|--logout=*|\
     --auth|--auth=*|--oauth|--oauth=*|--oauth-redirect|--oauth-redirect=*|\
-    --auth-token|--auth-token=*|--refresh-token|--refresh-token=*|\
+    --auth-token|--auth-token=*|--token|--token=*|--refresh-token|--refresh-token=*|\
     --signin|--signin=*|--sign-in|--sign-in=*|\
     --signout|--signout=*|--sign-out|--sign-out=*|\
     --deauth|--deauth=*|--reauth|--reauth=*|\
@@ -901,6 +901,7 @@ copy_session_between_homes() {
       echo "second-codex refused to overwrite different $target_label session file: $target_session_file" >&2
       return 73
     fi
+    chmod 600 "$target_session_file"
   else
     (umask 077; cp "$source_session_file" "$target_session_file")
     chmod 600 "$target_session_file"
@@ -1287,7 +1288,7 @@ doctor_command_is_blocked() {
   local output_file="$1"
   shift
   : > "$output_file"
-  if "$WRAPPER_PATH" "$@" >"$output_file" 2>&1; then
+  if SECOND_CODEX_DOCTOR_INTERNAL=1 "$WRAPPER_PATH" "$@" >"$output_file" 2>&1; then
     return 1
   fi
   grep -q "refused this account/auth command" "$output_file"
@@ -1431,8 +1432,10 @@ main() {
     return
   fi
 
-  ensure_shared_paths
-  ensure_shim
+  if [[ "${SECOND_CODEX_DOCTOR_INTERNAL:-0}" != "1" ]]; then
+    ensure_shared_paths
+    ensure_shim
+  fi
 
   local classification
   classification="$(classify_command "$@")"

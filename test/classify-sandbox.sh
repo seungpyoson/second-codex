@@ -91,11 +91,13 @@ assert_blocked features-login features login
 assert_blocked upgrade upgrade
 assert_blocked flag-login --login=user@example.com chat
 assert_blocked flag-auth-token --auth-token=abcdef chat
+assert_blocked flag-token --token=abcdef chat
 assert_blocked flag-oauth --oauth-redirect=http://example.test chat
 assert_blocked flag-signout --signout chat
 assert_blocked flag-reconnect --reconnect chat
 assert_blocked flag-sign-out --sign-out chat
 assert_blocked fork-flag-login fork --login=foo 00000000-0000-7000-8000-000000000099
+assert_blocked cloud-flag-token cloud --token=foo
 assert_blocked review-flag-signin review --signin do a review
 assert_blocked apply-flag-auth-token apply --auth-token=xyz patch.diff
 assert_second separator-login -- login

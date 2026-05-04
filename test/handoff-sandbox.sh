@@ -91,6 +91,14 @@ cmp -s "$SANDBOX/home-second/sessions/$SESSION_REL" "$SANDBOX/home-a/sessions/$S
 SESSION_MODE="$(stat -f '%Lp' "$SANDBOX/home-a/sessions/$SESSION_REL" 2>/dev/null || stat -c '%a' "$SANDBOX/home-a/sessions/$SESSION_REL")"
 test "$SESSION_MODE" = "600"
 grep -Fq "\"session_id\":\"$SESSION_ID\"" "$SANDBOX/home-a/history.jsonl"
+chmod 644 "$SANDBOX/home-a/sessions/$SESSION_REL"
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+"$REPO_ROOT/second-codex" handoff "$SESSION_ID" > "$SANDBOX/handoff-identical.out"
+SESSION_MODE="$(stat -f '%Lp' "$SANDBOX/home-a/sessions/$SESSION_REL" 2>/dev/null || stat -c '%a' "$SANDBOX/home-a/sessions/$SESSION_REL")"
+test "$SESSION_MODE" = "600"
 test ! -e "$SANDBOX/home-a/auth.json"
 
 echo '{"different":"primary transcript"}' > "$SANDBOX/home-a/sessions/$SESSION_REL"
