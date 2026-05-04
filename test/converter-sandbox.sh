@@ -494,4 +494,180 @@ assert "a.py" in joined, "unmapped Claude tool result should appear in folded te
 print("claude-to-codex unmapped-tool fold PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# K (R1): turn_aborted nested in event_msg.payload.type. Empirical corpus
+# scan: 501 real rollouts contain 535 nested turn_aborted, 0 top-level. The
+# original test only exercised the top-level form, so the abort filter was
+# a no-op on real data and abandoned content leaked through.
+# ---------------------------------------------------------------------------
+TK_UUID="00000000-0000-7000-8000-000000000026"
+TK_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-08-00-$TK_UUID.jsonl"
+cat > "$TK_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TK_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"User turn","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"NESTED-ABANDONED-DO-NOT-RECALL"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"event_msg","payload":{"type":"turn_aborted"}}
+{"timestamp":"2026-05-04T00:00:06.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-05-04T00:00:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"NESTED-COMMITTED-CHESTNUT"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:08.000Z","type":"event_msg","payload":{"type":"task_complete"}}
+EOF
+
+OUT="$SANDBOX/nested-abort.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TK_UUID" >"$OUT" 2>&1
+TK_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TK_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TK_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TK_NEW_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "NESTED-ABANDONED-DO-NOT-RECALL" not in joined, "nested turn_aborted not honored — abort filter is non-functional on real Codex rollouts"
+assert "NESTED-COMMITTED-CHESTNUT" in joined, "nested-form committed turn was wrongly dropped"
+print("nested turn_aborted PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# L (R2): UTF-8 round-trip under PYTHONUTF8=0 LC_ALL=C. Default open() uses
+# locale-driven encoding; pinning encoding="utf-8" removes the dependency
+# so emoji/CJK survive on hosts where the locale is C/POSIX without UTF-8
+# mode.
+# ---------------------------------------------------------------------------
+TL_UUID="00000000-0000-7000-8000-000000000027"
+TL_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-09-00-$TL_UUID.jsonl"
+cat > "$TL_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TL_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"locale test 🌶 漢字","images":[],"local_images":[],"text_elements":[]}}
+EOF
+
+OUT="$SANDBOX/locale.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  PYTHONUTF8=0 LC_ALL=C \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TL_UUID" >"$OUT" 2>"$SANDBOX/locale.err" || {
+    echo "FAIL: converter crashed under PYTHONUTF8=0 LC_ALL=C; locale-dependent open() bug not fixed"
+    cat "$SANDBOX/locale.err"
+    exit 1
+  }
+TL_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TL_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TL_NEW_UUID.jsonl"
+grep -q '🌶' "$TL_NEW_PATH" || { echo "FAIL: emoji not preserved under C locale"; exit 1; }
+grep -q '漢字' "$TL_NEW_PATH" || { echo "FAIL: CJK not preserved under C locale"; exit 1; }
+echo "UTF-8 round-trip under C locale PASSED"
+
+# ---------------------------------------------------------------------------
+# M (R3): README documents the new subcommands. The PR adds two user-facing
+# entry points; shipping them undocumented makes them undiscoverable.
+# ---------------------------------------------------------------------------
+grep -q 'handoff-to-claude' "$REPO_ROOT/README.md" || {
+  echo "FAIL: README.md does not document handoff-to-claude"; exit 1; }
+grep -q 'handoff-from-claude' "$REPO_ROOT/README.md" || {
+  echo "FAIL: README.md does not document handoff-from-claude"; exit 1; }
+echo "README documents new subcommands PASSED"
+
+# ---------------------------------------------------------------------------
+# N (R4): relative --target-cwd resolves to an absolute path before
+# encoding. Without resolve, "../foo" gets encoded as the literal directory
+# "..-foo" under the projects base, where Claude resume cannot find it from
+# any other working directory.
+# ---------------------------------------------------------------------------
+TN_UUID="00000000-0000-7000-8000-000000000028"
+TN_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-10-00-$TN_UUID.jsonl"
+cat > "$TN_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TN_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+
+mkdir -p "$SANDBOX/sub-target"
+# Compute expected encoding using the same abspath() logic the converter
+# uses, so the comparison is independent of macOS /var → /private/var
+# symlink quirks (bash `pwd` returns logical path, Python's getcwd
+# returns physical path).
+EXPECTED_ABS="$( cd "$SANDBOX" && python3 -c 'import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "../sub-target" )"
+EXPECTED_ENC="$(printf %s "$EXPECTED_ABS" | tr / -)"
+LITERAL_ENC="..-sub-target"
+
+OUT="$SANDBOX/rel-cwd.out"
+( cd "$SANDBOX" && \
+  CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TN_UUID" --target-cwd "../sub-target" >"$OUT" 2>&1 )
+TN_NEW_PATH="$(grep '^converted:' "$OUT" | awk -F'-> ' '{print $2}')"
+case "$TN_NEW_PATH" in
+    *"$LITERAL_ENC"*) echo "FAIL: relative --target-cwd not resolved (literal '..-' leaked into projects dir): $TN_NEW_PATH"; exit 1 ;;
+    *"$EXPECTED_ENC"*) : ;;
+    *) echo "FAIL: relative --target-cwd produced unexpected output: $TN_NEW_PATH (expected to contain $EXPECTED_ENC)"; exit 1 ;;
+esac
+echo "relative --target-cwd resolves to absolute PASSED"
+
+# ---------------------------------------------------------------------------
+# O (R5): bash wrapper rejects empty --target-cwd value. The flag-shape
+# check ([[ "$2" == -* ]]) does not catch empty string, so user input is
+# silently ignored and the converter falls through to source/runtime cwd.
+# ---------------------------------------------------------------------------
+"$REPO_ROOT/second-codex" handoff-to-claude "$CODEX_SRC_UUID" --target-cwd "" >"$SANDBOX/empty-cwd.out" 2>&1 && {
+  echo "FAIL: empty --target-cwd should be rejected"; exit 1; }
+grep -q "must not be empty" "$SANDBOX/empty-cwd.out" || {
+  echo "FAIL: empty --target-cwd error message missing 'must not be empty'"; exit 1; }
+echo "empty --target-cwd rejected PASSED"
+
+# ---------------------------------------------------------------------------
+# P (R6): UUIDv7 fallback (Python <3.13 without uuid.uuid7) emits valid
+# variant bits. RFC 9562 §5.7 requires the variant nibble (group 4 char 0)
+# to be in {8, 9, a, b}. The original fallback drew it from raw entropy,
+# producing invalid UUIDs ~75% of the time.
+# ---------------------------------------------------------------------------
+python3 - <<EOF
+import sys, uuid
+sys.path.insert(0, "$REPO_ROOT/lib")
+import session_convert as sc
+saved = uuid.uuid7 if hasattr(uuid, "uuid7") else None
+if saved is not None:
+    delattr(uuid, "uuid7")
+try:
+    bad = []
+    for _ in range(200):
+        u = sc.gen_uuid_v7()
+        nibble = u.split("-")[3][0].lower()
+        if nibble not in "89ab":
+            bad.append(u)
+    assert not bad, f"{len(bad)}/200 fallback UUIDs have invalid variant nibble (RFC 9562 §5.7); sample: {bad[:3]}"
+finally:
+    if saved is not None:
+        uuid.uuid7 = saved
+print("UUIDv7 fallback variant nibble PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# Q (R7): per-record source timestamps survive conversion. Without
+# preservation, every converted record carries wall-clock-at-conversion
+# time, losing the actual ordering and historical context that a session
+# transcript is supposed to record.
+# ---------------------------------------------------------------------------
+TQ_UUID="00000000-0000-7000-8000-000000000029"
+TQ_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-11-00-$TQ_UUID.jsonl"
+cat > "$TQ_PATH" <<EOF
+{"timestamp":"2020-06-15T12:00:00.000Z","type":"session_meta","payload":{"id":"$TQ_UUID","timestamp":"2020-06-15T12:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2020-06-15T12:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2020-06-15T12:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"timestamp marker","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2020-06-15T12:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply marker"}],"phase":"commentary"}}
+EOF
+
+OUT="$SANDBOX/ts.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TQ_UUID" >"$OUT" 2>&1
+TQ_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TQ_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TQ_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TQ_NEW_PATH") if l.strip()]
+ts_values = [r.get("timestamp", "") for r in records]
+preserved = [t for t in ts_values if t.startswith("2020-06-15")]
+assert preserved, f"no source timestamp preserved; got {ts_values!r}"
+print(f"source timestamps preserved on {len(preserved)} record(s) PASSED")
+EOF
+
 echo "all converter sandbox tests passed"

@@ -87,7 +87,9 @@ def gen_uuid_v7() -> str:
     ts_ms = int(time.time() * 1000)
     ts_hex = f"{ts_ms:012x}"
     rand = secrets.token_hex(10)
-    return f"{ts_hex[:8]}-{ts_hex[8:12]}-7{rand[0:3]}-{rand[3:7]}-{rand[7:19]}"
+    # RFC 9562 §5.7: variant nibble (group 4 char 0) must encode 10xx_2 → {8,9,a,b}.
+    variant = f"{(int(rand[3], 16) & 0x3) | 0x8:x}"
+    return f"{ts_hex[:8]}-{ts_hex[8:12]}-7{rand[0:3]}-{variant}{rand[4:7]}-{rand[7:19]}"
 
 
 def gen_claude_tool_id() -> str:
@@ -154,7 +156,10 @@ def find_claude_session(uuid_value: str) -> Path:
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     out = []
-    with path.open() as f:
+    # encoding="utf-8" is explicit so behavior does not depend on
+    # locale.getpreferredencoding(); under PYTHONUTF8=0 LC_ALL=C the default
+    # is ASCII and any non-ASCII byte raises UnicodeDecodeError.
+    with path.open(encoding="utf-8") as f:
         for lineno, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
@@ -181,7 +186,9 @@ def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     try:
-        with tmp.open("w") as f:
+        # Pin encoding so writing emoji/CJK content does not depend on the
+        # host locale (mirror of read_jsonl's open).
+        with tmp.open("w", encoding="utf-8") as f:
             for r in records:
                 # ensure_ascii=False keeps unicode content readable and matches
                 # how native sessions are stored on disk.
@@ -236,13 +243,16 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
         if rtype == "event_msg":
             payload = r.get("payload", {}) if isinstance(r.get("payload"), dict) else {}
             ptype = payload.get("type")
-        # Both top-level and nested-in-event_msg shapes have been observed in
-        # real Codex rollouts across versions; recognize either.
+        # Real Codex rollouts emit task_started / task_complete / turn_aborted
+        # nested inside event_msg.payload.type — corpus scan over the local
+        # session store (501 files) found 0 top-level vs 14577/14011/535 nested
+        # respectively. The top-level alternatives are kept defensively in case
+        # an older or future Codex version emits the simpler shape.
         if rtype == "task_started" or ptype == "task_started":
             pending_start = i
         elif rtype == "task_complete" or ptype == "task_complete":
             pending_start = None
-        elif rtype == "turn_aborted":
+        elif rtype == "turn_aborted" or ptype == "turn_aborted":
             if pending_start is not None:
                 for j in range(pending_start + 1, i):
                     if records[j].get("type") == "response_item":
@@ -266,18 +276,28 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         c = r.get("payload", {}).get("cwd") if isinstance(r.get("payload"), dict) else None
         if c:
             src_cwd_recent = c
-    cwd = (
+    cwd_raw = (
         target_cwd
         or src_cwd_recent
         or session_meta.get("payload", {}).get("cwd")
         or os.getcwd()
     )
+    # Make absolute so the encoded project directory matches how Claude
+    # Code resolves resume targets. abspath() collapses `..` and applies
+    # `~` expansion without following symlinks (resolve() would also chase
+    # symlinks like /tmp → /private/tmp, which changes the encoding from
+    # what the source session_meta recorded).
+    cwd = os.path.abspath(os.path.expanduser(cwd_raw))
     new_uuid = gen_uuid_v7()
 
     out: list[dict[str, Any]] = []
     parent_uuid: str | None = None
     call_id_to_tool_id: dict[str, str] = {}
     unknown_call_ids: set[str] = set()
+    # Tracks the source record's timestamp for the current loop iteration so
+    # converted records inherit it (preserving session ordering across the
+    # handoff). Falls back to now_iso() when the source record has none.
+    current_source_ts: str | None = None
 
     def make_record(rtype: str, message: dict[str, Any], extras: dict[str, Any] | None = None) -> dict[str, Any]:
         nonlocal parent_uuid
@@ -290,7 +310,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             "cwd": cwd,
             "version": "1.0.0",
             "userType": "external",
-            "timestamp": now_iso(),
+            "timestamp": current_source_ts or now_iso(),
             "isSidechain": False,
             "message": message,
         }
@@ -300,6 +320,8 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         return rec
 
     for r in records:
+        ts_field = r.get("timestamp")
+        current_source_ts = ts_field if isinstance(ts_field, str) else None
         rtype = r.get("type")
         payload = r.get("payload", {}) if isinstance(r.get("payload"), dict) else {}
         if rtype == "event_msg" and payload.get("type") == "user_message":
@@ -471,7 +493,11 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         c = r.get("cwd")
         if c:
             src_cwd = c
-    cwd = target_cwd or src_cwd or os.getcwd()
+    cwd_raw = target_cwd or src_cwd or os.getcwd()
+    # Make absolute (mirror of codex_to_claude). abspath rather than
+    # resolve so symlinks like /tmp → /private/tmp are not chased; Codex
+    # records cwd verbatim and we want to match.
+    cwd = os.path.abspath(os.path.expanduser(cwd_raw))
     new_uuid = gen_uuid_v7()
     cli_version = _detect_codex_cli_version()
 
@@ -509,6 +535,10 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
     })
 
     for r in records:
+        # Preserve the source record's timestamp so converted records inherit
+        # the original ordering. Falls back to now_iso() when missing.
+        ts_field = r.get("timestamp")
+        src_ts = ts_field if isinstance(ts_field, str) else now_iso()
         rtype = r.get("type")
         message = r.get("message")
         if not isinstance(message, dict):
@@ -534,7 +564,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 joined = "\n".join(p for p in text_parts if p)
                 if joined.strip():
                     out.append({
-                        "timestamp": now_iso(),
+                        "timestamp": src_ts,
                         "type": "event_msg",
                         "payload": {
                             "type": "user_message",
@@ -555,7 +585,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     # Companion fold for an unmapped tool. Render result as
                     # a user-message text block describing the result.
                     out.append({
-                        "timestamp": now_iso(),
+                        "timestamp": src_ts,
                         "type": "event_msg",
                         "payload": {
                             "type": "user_message",
@@ -569,7 +599,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     # back to a fresh call_id so the rollout still validates.
                     call_id = gen_codex_call_id()
                 out.append({
-                    "timestamp": now_iso(),
+                    "timestamp": src_ts,
                     "type": "response_item",
                     "payload": {
                         "type": "function_call_output",
@@ -593,7 +623,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 joined = "\n".join(p for p in text_parts if p)
                 if joined.strip():
                     out.append({
-                        "timestamp": now_iso(),
+                        "timestamp": src_ts,
                         "type": "response_item",
                         "payload": {
                             "type": "message",
@@ -612,7 +642,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     call_id = gen_codex_call_id()
                     tool_id_to_call_id[tool_use_id] = call_id
                     out.append({
-                        "timestamp": now_iso(),
+                        "timestamp": src_ts,
                         "type": "response_item",
                         "payload": {
                             "type": "function_call",
@@ -628,7 +658,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     tool_id_to_call_id[tool_use_id] = "__unmapped__"
                     preview = json.dumps(input_obj) if isinstance(input_obj, (dict, list)) else str(input_obj)
                     out.append({
-                        "timestamp": now_iso(),
+                        "timestamp": src_ts,
                         "type": "response_item",
                         "payload": {
                             "type": "message",
