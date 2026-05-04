@@ -43,8 +43,13 @@ def _claude_projects_base() -> Path:
     return Path(home) / "projects"
 
 
-# Tool name mapping. Maps are intentionally narrow; unmapped tools fall back
-# to a stub-as-text representation rather than fabricating a target tool.
+# Tool name mapping. Only tools with a clean structural equivalent on the
+# other side are listed here. Unmapped tools are folded into descriptive
+# text blocks (so the receiving model still sees the prior tool history but
+# in a form that does not depend on the receiver recognizing the tool's
+# schema). Adding an entry requires the tool to exist on both sides AND for
+# the argument shapes to be losslessly translatable via the corresponding
+# _normalize_tool_input helper.
 CLAUDE_TO_CODEX_TOOL = {
     "Bash": "exec_command",
 }
@@ -168,6 +173,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
     out: list[dict[str, Any]] = []
     parent_uuid: str | None = None
     call_id_to_tool_id: dict[str, str] = {}
+    unknown_call_ids: set[str] = set()
 
     def make_record(rtype: str, message: dict[str, Any], extras: dict[str, Any] | None = None) -> dict[str, Any]:
         nonlocal parent_uuid
@@ -233,44 +239,72 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         elif ptype == "function_call":
             call_id = payload.get("call_id", "")
             tool_name_codex = payload.get("name", "")
-            tool_name_claude = CODEX_TO_CLAUDE_TOOL.get(tool_name_codex, tool_name_codex)
             args_str = payload.get("arguments", "{}")
             try:
                 args = json.loads(args_str) if isinstance(args_str, str) else args_str
             except json.JSONDecodeError:
                 args = {"raw_arguments": args_str}
-            tool_use_id = gen_claude_tool_id()
-            call_id_to_tool_id[call_id] = tool_use_id
-            # Emit assistant record carrying a tool_use block.
-            out.append(make_record(
-                "assistant",
-                {
-                    "id": f"msg_xfmt_{secrets.token_hex(8)}",
-                    "type": "message",
-                    "role": "assistant",
-                    "model": "claude-opus-4-7",
-                    "content": [
-                        {"type": "tool_use", "id": tool_use_id, "name": tool_name_claude, "input": _normalize_tool_input(tool_name_claude, args)},
-                    ],
-                    "stop_reason": "tool_use",
-                    "usage": {"input_tokens": 0, "output_tokens": 0},
-                },
-                extras={"requestId": f"req_xfmt_{secrets.token_hex(8)}"},
-            ))
+            if tool_name_codex in CODEX_TO_CLAUDE_TOOL:
+                tool_name_claude = CODEX_TO_CLAUDE_TOOL[tool_name_codex]
+                tool_use_id = gen_claude_tool_id()
+                call_id_to_tool_id[call_id] = tool_use_id
+                out.append(make_record(
+                    "assistant",
+                    {
+                        "id": f"msg_xfmt_{secrets.token_hex(8)}",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-opus-4-7",
+                        "content": [
+                            {"type": "tool_use", "id": tool_use_id, "name": tool_name_claude,
+                             "input": _normalize_tool_input(tool_name_claude, args)},
+                        ],
+                        "stop_reason": "tool_use",
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                    extras={"requestId": f"req_xfmt_{secrets.token_hex(8)}"},
+                ))
+            else:
+                # Fold unmapped tool call into descriptive text. The receiving
+                # Claude API may reject unknown tool names; rendering as text
+                # preserves the narrative without depending on tool schema.
+                unknown_call_ids.add(call_id)
+                preview = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
+                out.append(make_record(
+                    "assistant",
+                    {
+                        "id": f"msg_xfmt_{secrets.token_hex(8)}",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-opus-4-7",
+                        "content": [{"type": "text",
+                                     "text": f"[Used Codex tool `{tool_name_codex}` with arguments: {preview}]"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                    extras={"requestId": f"req_xfmt_{secrets.token_hex(8)}"},
+                ))
         elif ptype == "function_call_output":
             call_id = payload.get("call_id", "")
+            output = payload.get("output", "")
+            if call_id in unknown_call_ids:
+                # Companion fold for an unmapped tool call.
+                out.append(make_record(
+                    "user",
+                    {"role": "user", "content": [{"type": "text",
+                                                  "text": f"[Tool result: {output}]"}]},
+                ))
+                continue
             tool_use_id = call_id_to_tool_id.get(call_id)
             if tool_use_id is None:
                 # Orphan output (no matching call). Fold into a user text record.
-                content = payload.get("output", "")
-                if not content:
+                if not output:
                     continue
                 out.append(make_record(
                     "user",
-                    {"role": "user", "content": [{"type": "text", "text": str(content)}]},
+                    {"role": "user", "content": [{"type": "text", "text": str(output)}]},
                 ))
                 continue
-            output = payload.get("output", "")
             out.append(make_record(
                 "user",
                 {"role": "user", "content": [
@@ -377,13 +411,30 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     })
             for tr in tool_results:
                 tool_use_id = tr.get("tool_use_id", "")
-                call_id = tool_id_to_call_id.get(tool_use_id, gen_codex_call_id())
                 output = tr.get("content")
                 if isinstance(output, list):
                     output = "\n".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in output)
                 output_str = str(output or "")
                 if tr.get("is_error"):
                     output_str = f"[error]\n{output_str}"
+                call_id = tool_id_to_call_id.get(tool_use_id)
+                if call_id == "__unmapped__":
+                    # Companion fold for an unmapped tool. Render result as
+                    # a user-message text block describing the result.
+                    out.append({
+                        "timestamp": now_iso(),
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "user_message",
+                            "message": f"[Tool result: {output_str}]",
+                            "images": [], "local_images": [], "text_elements": [],
+                        },
+                    })
+                    continue
+                if call_id is None:
+                    # Orphan tool_result (no matching tool_use seen). Fall
+                    # back to a fresh call_id so the rollout still validates.
+                    call_id = gen_codex_call_id()
                 out.append({
                     "timestamp": now_iso(),
                     "type": "response_item",
@@ -421,21 +472,39 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             for tu in tool_uses:
                 tool_use_id = tu.get("id", "")
                 tool_name_claude = tu.get("name", "")
-                tool_name_codex = CLAUDE_TO_CODEX_TOOL.get(tool_name_claude, tool_name_claude.lower())
                 input_obj = tu.get("input") or {}
-                args = _normalize_tool_input_to_codex(tool_name_claude, input_obj, cwd)
-                call_id = gen_codex_call_id()
-                tool_id_to_call_id[tool_use_id] = call_id
-                out.append({
-                    "timestamp": now_iso(),
-                    "type": "response_item",
-                    "payload": {
-                        "type": "function_call",
-                        "name": tool_name_codex,
-                        "arguments": json.dumps(args),
-                        "call_id": call_id,
-                    },
-                })
+                if tool_name_claude in CLAUDE_TO_CODEX_TOOL:
+                    tool_name_codex = CLAUDE_TO_CODEX_TOOL[tool_name_claude]
+                    args = _normalize_tool_input_to_codex(tool_name_claude, input_obj, cwd)
+                    call_id = gen_codex_call_id()
+                    tool_id_to_call_id[tool_use_id] = call_id
+                    out.append({
+                        "timestamp": now_iso(),
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": tool_name_codex,
+                            "arguments": json.dumps(args),
+                            "call_id": call_id,
+                        },
+                    })
+                else:
+                    # Fold unmapped Claude tool into Codex assistant text. Codex
+                    # may not accept arbitrary tool names from a foreign tool
+                    # schema, so this stays in the narrative as text.
+                    tool_id_to_call_id[tool_use_id] = "__unmapped__"
+                    preview = json.dumps(input_obj) if isinstance(input_obj, (dict, list)) else str(input_obj)
+                    out.append({
+                        "timestamp": now_iso(),
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text",
+                                         "text": f"[Used Claude tool `{tool_name_claude}` with input: {preview}]"}],
+                            "phase": "commentary",
+                        },
+                    })
         # Drop attachment, file-history-snapshot, system, queue-operation, etc.
 
     target_path = codex_rollout_path(new_uuid)

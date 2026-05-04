@@ -203,4 +203,79 @@ CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
 grep -q "^new session UUID:" "$SANDBOX/wrap-cc2.out"
 
 echo "bash wrapper smoke tests PASSED"
+
+# ---------------------------------------------------------------------------
+# Unmapped-tool fold: tool calls without a known cross-format mapping must
+# render as descriptive text rather than emit a function_call/tool_use the
+# receiver may reject as an unknown tool name.
+# ---------------------------------------------------------------------------
+
+# Codex source with an unknown tool (web_search_call).
+CODEX_UNMAPPED_UUID="00000000-0000-7000-8000-00000000000d"
+CODEX_UNMAPPED="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-01-00-$CODEX_UNMAPPED_UUID.jsonl"
+cat > "$CODEX_UNMAPPED" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CODEX_UNMAPPED_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Search the web","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"web_search_call","arguments":"{\"query\":\"hello\"}","call_id":"call_UNMAPPED1"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_UNMAPPED1","output":"hello world"}}
+EOF
+
+OUT="$SANDBOX/c2c-unmapped.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$CODEX_UNMAPPED_UUID" >"$OUT" 2>&1
+NEW_CLAUDE_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+NEW_CLAUDE_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$NEW_CLAUDE_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$NEW_CLAUDE_PATH") if l.strip()]
+# No tool_use blocks should appear (web_search_call is unmapped).
+for r in records:
+    if r["type"] != "assistant":
+        continue
+    for block in r["message"]["content"]:
+        assert block.get("type") != "tool_use", "unmapped tool should fold to text, got tool_use"
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "web_search_call" in joined, "unmapped tool name should appear in folded text"
+assert "hello world" in joined, "unmapped tool result should appear in folded text"
+print("codex-to-claude unmapped-tool fold PASSED")
+EOF
+
+# Claude source with an unknown tool (Glob).
+CLAUDE_UNMAPPED_UUID="00000000-0000-4000-8000-00000000000e"
+CLAUDE_UNMAPPED="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$CLAUDE_UNMAPPED_UUID.jsonl"
+cat > "$CLAUDE_UNMAPPED" <<'EOF'
+{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"00000000-0000-4000-8000-00000000000e","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:00.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"Find files"}]}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"00000000-0000-4000-8000-00000000000e","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:01.000Z","isSidechain":false,"requestId":"req_t","message":{"id":"m1","type":"message","role":"assistant","model":"claude-opus-4-7","content":[{"type":"tool_use","id":"toolu_UNMAPPED1","name":"Glob","input":{"pattern":"*.py"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":10}}}
+{"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"00000000-0000-4000-8000-00000000000e","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2026-05-04T00:00:02.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_UNMAPPED1","content":"a.py b.py","is_error":false}]}}
+EOF
+
+OUT="$SANDBOX/cc2-unmapped.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$CLAUDE_UNMAPPED_UUID" >"$OUT" 2>&1
+NEW_CODEX_PATH="$(grep '^converted:' "$OUT" | awk -F'-> ' '{print $2}')"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$NEW_CODEX_PATH") if l.strip()]
+# No function_call records should be emitted for an unmapped Claude tool.
+for r in records:
+    if r["type"] == "response_item" and r["payload"].get("type") == "function_call":
+        assert r["payload"]["name"] != "glob", "unmapped Claude tool leaked as function_call with lowercased name"
+        assert r["payload"]["name"] in ("exec_command",), f"unexpected function_call name: {r['payload']['name']!r}"
+joined = ""
+for r in records:
+    pl = r.get("payload", {})
+    if pl.get("type") == "message":
+        for b in pl.get("content", []):
+            if isinstance(b, dict) and b.get("type") == "output_text":
+                joined += b.get("text", "")
+    elif pl.get("type") == "user_message":
+        joined += pl.get("message", "")
+assert "Glob" in joined, "unmapped Claude tool name should appear in folded text"
+assert "a.py" in joined, "unmapped Claude tool result should appear in folded text"
+print("claude-to-codex unmapped-tool fold PASSED")
+EOF
+
 echo "all converter sandbox tests passed"
