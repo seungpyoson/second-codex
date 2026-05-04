@@ -1104,10 +1104,49 @@ import json
 records = [json.loads(l) for l in open("$TCC_NEW_PATH") if l.strip()]
 joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
 assert "ORPHAN-OUTPUT-MARKER-PERIWINKLE" in joined, f"orphan output content silently dropped; got {joined!r}"
-assert "Orphan tool result" in joined, f"orphan-fold prefix missing; got {joined!r}"
-# Companion fold prefix MUST NOT appear when there's no matching call.
-assert "[Tool result:" not in joined.replace("[Orphan tool result:", ""), f"orphan output mis-classified as companion; got {joined!r}"
+# Exactly one orphan-fold and zero companion-folds: counts assert directly so
+# a maintainer reading the test sees the invariant without parsing replace gymnastics.
+assert joined.count("[Orphan tool result:") == 1, f"expected one orphan-fold; got {joined!r}"
+assert joined.count("[Tool result:") == 0, f"orphan output mis-classified as companion; got {joined!r}"
 print("orphan custom_tool_call_output flagged as orphan PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# DD (review #7): empty call_id must always orphan-flag the output, never
+# accidentally match another empty-call_id record. Real Codex always emits
+# proper `call_*` ids; this test pins the contract for malformed sources.
+# Pre-fix: an empty-call_id call AND an empty-call_id output would both store
+# `""` in custom_tool_call_ids, the membership check would succeed, and the
+# output got the COMPANION fold even though the linkage is meaningless.
+# ---------------------------------------------------------------------------
+TDD_UUID="00000000-0000-7000-8000-000000000033"
+TDD_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-20-00-$TDD_UUID.jsonl"
+cat > "$TDD_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TDD_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"empty-id corruption","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"","name":"corrupt_call","input":"EMPTYID-CALL-INPUT-MARMALADE"}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"","output":"EMPTYID-OUTPUT-MARKER-CILANTRO"}}
+EOF
+
+OUT="$SANDBOX/empty-id.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TDD_UUID" >"$OUT" 2>&1
+TDD_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TDD_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TDD_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TDD_NEW_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+# The call's input still surfaces (preserved as text — distinct content).
+assert "EMPTYID-CALL-INPUT-MARMALADE" in joined, f"empty-id call input lost; got {joined!r}"
+# The output also surfaces but as orphan, not companion: empty IDs do NOT
+# count as a linkage match.
+assert "EMPTYID-OUTPUT-MARKER-CILANTRO" in joined, f"empty-id output lost; got {joined!r}"
+assert joined.count("[Orphan tool result:") == 1, f"empty-id output should orphan-flag; got {joined!r}"
+assert joined.count("[Tool result:") == 0, f"empty-id output incorrectly classified as companion; got {joined!r}"
+print("empty call_id always orphans (no false linkage) PASSED")
 EOF
 
 echo "all converter sandbox tests passed"

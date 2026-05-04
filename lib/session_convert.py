@@ -581,7 +581,10 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 # Fold unmapped tool call into descriptive text. The receiving
                 # Claude API may reject unknown tool names; rendering as text
                 # preserves the narrative without depending on tool schema.
-                unknown_call_ids.add(call_id)
+                # Skip empty call_id when tracking (parallel guard to
+                # custom_tool_call_ids — empty isn't a real linkage key).
+                if call_id:
+                    unknown_call_ids.add(call_id)
                 preview = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
                 out.append(make_record(
                     "assistant",
@@ -600,7 +603,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         elif ptype == "function_call_output":
             call_id = payload.get("call_id", "")
             output = payload.get("output", "")
-            if call_id in unknown_call_ids:
+            if call_id and call_id in unknown_call_ids:
                 # Companion fold for an unmapped tool call.
                 out.append(make_record(
                     "user",
@@ -633,7 +636,13 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             tool_name = payload.get("name", "") or "custom_tool"
             tool_input = payload.get("input", "")
             preview = tool_input if isinstance(tool_input, str) else json.dumps(tool_input)
-            custom_tool_call_ids.add(call_id)
+            # Skip empty call_id when tracking — empty isn't a real linkage
+            # key. Without this guard, an empty-id call followed by an
+            # empty-id output would falsely match as a companion pair even
+            # though the IDs are meaningless. Real Codex always emits a
+            # proper `call_*` id; this guard handles malformed sources.
+            if call_id:
+                custom_tool_call_ids.add(call_id)
             out.append(make_record(
                 "assistant",
                 {
@@ -653,9 +662,9 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             output = payload.get("output", "")
             # Companion fold for a custom_tool_call. If the matching call
             # record was filtered upstream (e.g. abandoned in a turn_aborted)
-            # the output is still surfaced — flagged as orphan so a reader
-            # of the converted session can tell the linkage was broken.
-            prefix = "Tool result" if call_id in custom_tool_call_ids else "Orphan tool result"
+            # OR call_id is empty (no real linkage), surface as orphan so a
+            # reader of the converted session can tell the linkage is broken.
+            prefix = "Tool result" if call_id and call_id in custom_tool_call_ids else "Orphan tool result"
             out.append(make_record(
                 "user",
                 {"role": "user", "content": [{"type": "text",
