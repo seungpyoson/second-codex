@@ -540,11 +540,28 @@ SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
 SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
 "$REPO_ROOT/second-codex" exec resume "$PROMPT_RESUME_SESSION_ID" >"$SANDBOX/prompt-resume.out" 2>&1
-if grep -q "imported primary Codex session into second account runtime" "$SANDBOX/prompt-resume.out"; then
-  echo "FAIL prompt text triggered primary session import"
+if ! grep -q "imported primary Codex session into second account runtime" "$SANDBOX/prompt-resume.out"; then
+  echo "FAIL exec resume did not import primary session into second account runtime"
   exit 1
 fi
-test ! -e "$SANDBOX/prompt-home-second/sessions/$PROMPT_RESUME_REL"
+cmp -s "$SANDBOX/prompt-home-a/sessions/$PROMPT_RESUME_REL" "$SANDBOX/prompt-home-second/sessions/$PROMPT_RESUME_REL"
+
+EXEC_OPTION_RESUME_SESSION_ID="00000000-0000-7000-8000-000000000021"
+EXEC_OPTION_RESUME_REL="2026/05/03/rollout-2026-05-03T19-22-47-$EXEC_OPTION_RESUME_SESSION_ID.jsonl"
+cat >> "$SANDBOX/prompt-home-a/history.jsonl" <<EOF
+{"session_id":"$EXEC_OPTION_RESUME_SESSION_ID","ts":1760000021,"text":"exec option resume primary work"}
+EOF
+cat > "$SANDBOX/prompt-home-a/sessions/$EXEC_OPTION_RESUME_REL" <<EOF
+{"type":"session_meta","payload":{"id":"$EXEC_OPTION_RESUME_SESSION_ID","cwd":"/tmp/project"}}
+EOF
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/prompt-home-a" \
+SECOND_CODEX_HOME="$SANDBOX/prompt-home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+SECOND_CODEX_SWITCH_REAL_CODEX="/usr/bin/true" \
+"$REPO_ROOT/second-codex" exec --model gpt-5.5 resume "$EXEC_OPTION_RESUME_SESSION_ID" >"$SANDBOX/exec-option-resume.out" 2>&1
+grep -q "imported primary Codex session into second account runtime" "$SANDBOX/exec-option-resume.out"
+cmp -s "$SANDBOX/prompt-home-a/sessions/$EXEC_OPTION_RESUME_REL" "$SANDBOX/prompt-home-second/sessions/$EXEC_OPTION_RESUME_REL"
 
 HISTORY_SYMLINK_SESSION_ID="00000000-0000-7000-8000-000000000010"
 HISTORY_SYMLINK_REL="2026/05/03/rollout-2026-05-03T19-12-47-$HISTORY_SYMLINK_SESSION_ID.jsonl"

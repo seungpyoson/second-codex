@@ -906,7 +906,7 @@ second-codex: copied_session=$copied_session
 EOF
 }
 
-find_resume_session_arg() {
+find_session_id_after_resume_command() {
   local args=("$@")
   local i=0 saw_ambiguous_option=0 arg
   while (( i < ${#args[@]} )); do
@@ -914,6 +914,52 @@ find_resume_session_arg() {
     case "$arg" in
       --)
         i=$((i + 1))
+        if (( i < ${#args[@]} )) && is_valid_session_id "${args[$i]}"; then
+          printf '%s\n' "${args[$i]}"
+          return 0
+        fi
+        return 1
+        ;;
+      --*=*)
+        resume_option_suppresses_session_arg "$arg" && return 1
+        i=$((i + 1))
+        ;;
+      -*)
+        resume_option_suppresses_session_arg "$arg" && return 1
+        if resume_option_takes_no_value "$arg"; then
+          i=$((i + 1))
+        elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
+          i=$((i + 2))
+        else
+          saw_ambiguous_option=1
+          i=$((i + 1))
+        fi
+        ;;
+      *)
+        if (( saw_ambiguous_option )); then
+          saw_ambiguous_option=0
+          i=$((i + 1))
+          continue
+        fi
+        if is_valid_session_id "$arg"; then
+          printf '%s\n' "$arg"
+          return 0
+        fi
+        return 1
+        ;;
+    esac
+  done
+  return 1
+}
+
+find_resume_session_arg() {
+  local args=("$@")
+  local i=0 saw_ambiguous_option=0 arg
+  while (( i < ${#args[@]} )); do
+    arg="${args[$i]}"
+    case "$arg" in
+      --)
+        return 1
         ;;
       --*=*)
         i=$((i + 1))
@@ -928,27 +974,20 @@ find_resume_session_arg() {
           i=$((i + 1))
         fi
         ;;
-      resume)
+      exec)
         i=$((i + 1))
         saw_ambiguous_option=0
         while (( i < ${#args[@]} )); do
           arg="${args[$i]}"
           case "$arg" in
             --)
-              i=$((i + 1))
-              if (( i < ${#args[@]} )) && is_valid_session_id "${args[$i]}"; then
-                printf '%s\n' "${args[$i]}"
-                return 0
-              fi
               return 1
               ;;
             --*=*)
-              resume_option_suppresses_session_arg "$arg" && return 1
               i=$((i + 1))
               ;;
             -*)
-              resume_option_suppresses_session_arg "$arg" && return 1
-              if resume_option_takes_no_value "$arg"; then
+              if option_takes_no_value "$arg"; then
                 i=$((i + 1))
               elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
                 i=$((i + 2))
@@ -957,21 +996,25 @@ find_resume_session_arg() {
                 i=$((i + 1))
               fi
               ;;
+            resume)
+              find_session_id_after_resume_command "${args[@]:$((i + 1))}"
+              return
+              ;;
             *)
               if (( saw_ambiguous_option )); then
                 saw_ambiguous_option=0
                 i=$((i + 1))
                 continue
               fi
-              if is_valid_session_id "$arg"; then
-                printf '%s\n' "$arg"
-                return 0
-              fi
               return 1
               ;;
           esac
         done
         return 1
+        ;;
+      resume)
+        find_session_id_after_resume_command "${args[@]:$((i + 1))}"
+        return
         ;;
       *)
         if (( saw_ambiguous_option )); then
