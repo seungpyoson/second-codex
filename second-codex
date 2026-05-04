@@ -1204,6 +1204,12 @@ run_session_converter() {
           echo "second-codex $cmd_name: --target-cwd specified twice" >&2
           return 64
         fi
+        # Reject flag-shaped values so something like
+        # `--target-cwd --foo UUID` does not silently treat --foo as the cwd.
+        if [[ "$2" == -* ]]; then
+          echo "second-codex $cmd_name: --target-cwd value must not start with '-'" >&2
+          return 64
+        fi
         target_cwd="$2"
         shift 2
         ;;

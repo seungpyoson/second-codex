@@ -332,6 +332,95 @@ esac
 echo "wrapper --help / --target-cwd PASSED"
 
 # ---------------------------------------------------------------------------
+# J: top-level task_started / turn_aborted (no event_msg wrapper).
+# Some Codex rollouts emit task_started as a top-level type rather than
+# nested in event_msg.payload. The abort filter must recognize either form.
+# ---------------------------------------------------------------------------
+TJ_UUID="00000000-0000-7000-8000-000000000023"
+TJ_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-05-00-$TJ_UUID.jsonl"
+cat > "$TJ_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TJ_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"User turn","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"task_started"}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"TOPLEVEL-ABANDONED-DO-NOT-RECALL"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:05.000Z","type":"turn_aborted"}
+{"timestamp":"2026-05-04T00:00:06.000Z","type":"task_started"}
+{"timestamp":"2026-05-04T00:00:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"TOPLEVEL-COMMITTED-MARMALADE"}],"phase":"commentary"}}
+{"timestamp":"2026-05-04T00:00:08.000Z","type":"task_complete"}
+EOF
+
+OUT="$SANDBOX/topabort.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TJ_UUID" >"$OUT" 2>&1
+TJ_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TJ_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TJ_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TJ_NEW_PATH") if l.strip()]
+joined = "".join(b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict))
+assert "TOPLEVEL-ABANDONED-DO-NOT-RECALL" not in joined, "top-level turn_aborted not honored"
+assert "TOPLEVEL-COMMITTED-MARMALADE" in joined, "top-level committed turn was wrongly dropped"
+print("top-level task_started / turn_aborted PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
+# H: unicode round-trip. Source content with emoji and CJK must survive
+# without being escaped to \uXXXX sequences in the converted file.
+# ---------------------------------------------------------------------------
+TH_UUID="00000000-0000-7000-8000-000000000024"
+TH_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-06-00-$TH_UUID.jsonl"
+cat > "$TH_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TH_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"mode":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"unicode marker 🍊 漢字 ✅","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"echo back: 🍊 漢字 ✅"}],"phase":"commentary"}}
+EOF
+
+OUT="$SANDBOX/unicode.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TH_UUID" >"$OUT" 2>&1
+TH_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TH_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TH_NEW_UUID.jsonl"
+
+# Bytes on disk must be the unescaped UTF-8, not \uXXXX escape sequences.
+if grep -q '\\\\u' "$TH_NEW_PATH"; then
+    echo "FAIL: unicode escapes leaked into converted session ($TH_NEW_PATH)"
+    exit 1
+fi
+grep -q '🍊' "$TH_NEW_PATH"
+grep -q '漢字' "$TH_NEW_PATH"
+echo "unicode round-trip PASSED"
+
+# ---------------------------------------------------------------------------
+# I: malformed JSON warning is emitted to stderr (and conversion proceeds).
+# ---------------------------------------------------------------------------
+TI_UUID="00000000-0000-7000-8000-000000000025"
+TI_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-07-00-$TI_UUID.jsonl"
+cat > "$TI_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TI_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{this is not valid json on a single line
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"survived","images":[],"local_images":[],"text_elements":[]}}
+EOF
+
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TI_UUID" >"$SANDBOX/malformed.stdout" 2>"$SANDBOX/malformed.stderr"
+TI_NEW_UUID="$(grep '^new session UUID:' "$SANDBOX/malformed.stdout" | awk '{print $NF}')"
+TI_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TI_NEW_UUID.jsonl"
+grep -q "warning: skipping malformed JSON line" "$SANDBOX/malformed.stderr"
+grep -q "JSONDecodeError" "$SANDBOX/malformed.stderr"
+# stderr should NOT echo the offending line content (privacy: avoid leaking
+# source bytes). The bad line we wrote contains the literal substring "this".
+if grep -q "this is not valid json" "$SANDBOX/malformed.stderr"; then
+    echo "FAIL: malformed-line content leaked to stderr"
+    exit 1
+fi
+# The valid line ("survived") must still convert into the output.
+grep -q "survived" "$TI_NEW_PATH"
+echo "malformed JSON warning PASSED"
+
+# ---------------------------------------------------------------------------
 # Unmapped-tool fold: tool calls without a known cross-format mapping must
 # render as descriptive text rather than emit a function_call/tool_use the
 # receiver may reject as an unknown tool name.

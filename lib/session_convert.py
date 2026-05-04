@@ -42,7 +42,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
+import subprocess
 import sys
 import time
 import uuid
@@ -101,7 +103,7 @@ def encode_claude_project(cwd: str) -> str:
     return cwd.replace("/", "-")
 
 
-_FULL_UUID_RE = __import__("re").compile(
+_FULL_UUID_RE = re.compile(
     r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
 )
 
@@ -162,9 +164,11 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError as exc:
                 # Log to stderr so bugs in the source file are surfaced rather
                 # than silently dropping data. Conversion still proceeds.
+                # Avoid echoing exc message content (may quote source bytes);
+                # exception class + byte position is enough for diagnosis.
                 sys.stderr.write(
                     f"session_convert: warning: skipping malformed JSON line "
-                    f"{lineno} in {path}: {exc}\n"
+                    f"{lineno} (col {exc.colno}) in {path}: {type(exc).__name__}\n"
                 )
                 continue
     return out
@@ -228,13 +232,16 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
     pending_start: int | None = None
     for i, r in enumerate(records):
         rtype = r.get("type")
+        ptype: str | None = None
         if rtype == "event_msg":
             payload = r.get("payload", {}) if isinstance(r.get("payload"), dict) else {}
             ptype = payload.get("type")
-            if ptype == "task_started":
-                pending_start = i
-            elif ptype == "task_complete":
-                pending_start = None
+        # Both top-level and nested-in-event_msg shapes have been observed in
+        # real Codex rollouts across versions; recognize either.
+        if rtype == "task_started" or ptype == "task_started":
+            pending_start = i
+        elif rtype == "task_complete" or ptype == "task_complete":
+            pending_start = None
         elif rtype == "turn_aborted":
             if pending_start is not None:
                 for j in range(pending_start + 1, i):
@@ -436,18 +443,16 @@ def _detect_codex_cli_version() -> str:
     Falls back to a sentinel rather than failing the conversion when codex
     is not installed or the output shape changes."""
     try:
-        import subprocess
         res = subprocess.run(
             ["codex", "--version"], capture_output=True, text=True, timeout=2
         )
         if res.returncode == 0:
             # Output is like "OpenAI Codex v0.128.0 (research preview)" or
             # similar. Extract the first vN.N.N-shaped token if present.
-            import re
             m = re.search(r"v?(\d+\.\d+\.\d+)", res.stdout)
             if m:
                 return m.group(1)
-    except (FileNotFoundError, OSError, __import__("subprocess").TimeoutExpired):
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         pass
     return "0.0.0-translated"
 
