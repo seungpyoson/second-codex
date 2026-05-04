@@ -1205,9 +1205,13 @@ run_session_converter() {
           return 64
         fi
         # Reject empty / whitespace-only values so user intent is not
-        # silently dropped when `--target-cwd ""` (or `"   "`) is passed.
-        # Python would otherwise fall through to the source/runtime cwd.
-        if [[ "$2" =~ ^[[:space:]]*$ ]]; then
+        # silently dropped when `--target-cwd ""` (or `"   "`, or a single
+        # Unicode NBSP) is passed. Python would otherwise fall through to
+        # the source/runtime cwd. Bash 3.2's [[:space:]] only matches
+        # ASCII whitespace, so we shell out to Python's str.strip() to
+        # match the converter's stricter Unicode-aware check at this
+        # boundary too — keeping both layers semantically identical.
+        if ! python3 -c 'import sys; sys.exit(0 if sys.argv[1].strip() else 1)' "$2"; then
           echo "second-codex $cmd_name: --target-cwd value must not be empty or whitespace-only" >&2
           return 64
         fi

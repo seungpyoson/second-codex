@@ -630,7 +630,17 @@ grep -q "must not be empty" "$SANDBOX/empty-cwd.out" || {
   echo "FAIL: whitespace-only --target-cwd should be rejected by wrapper"; exit 1; }
 grep -q "must not be empty or whitespace-only" "$SANDBOX/whitespace-cwd.out" || {
   echo "FAIL: whitespace-only --target-cwd wrapper error missing expected message; got $(cat "$SANDBOX/whitespace-cwd.out")"; exit 1; }
-echo "empty + whitespace --target-cwd rejected by wrapper PASSED"
+# Unicode whitespace (NBSP U+00A0, encoded as the raw UTF-8 bytes \xc2\xa0
+# so this works on bash 3.2 too) must also be rejected by the wrapper.
+# Round-11 follow-up: closes the cosmetic divergence the round-10 panel
+# flagged — bash [[:space:]] only matches ASCII, but the wrapper now
+# shells out to python3 str.strip() so both boundaries reject the same
+# input set.
+"$REPO_ROOT/second-codex" handoff-to-claude "$CODEX_SRC_UUID" --target-cwd $'\xc2\xa0' >"$SANDBOX/nbsp-cwd.out" 2>&1 && {
+  echo "FAIL: NBSP --target-cwd should be rejected by wrapper"; exit 1; }
+grep -q "must not be empty or whitespace-only" "$SANDBOX/nbsp-cwd.out" || {
+  echo "FAIL: NBSP --target-cwd wrapper error missing expected message; got $(cat "$SANDBOX/nbsp-cwd.out")"; exit 1; }
+echo "empty + ASCII whitespace + Unicode NBSP --target-cwd rejected by wrapper PASSED"
 
 # ---------------------------------------------------------------------------
 # P (R6): UUIDv7 fallback (Python <3.13 without uuid.uuid7) emits valid
