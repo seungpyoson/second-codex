@@ -1,0 +1,21 @@
+.DS_Store
+/tmp/
+*.tmp
+*.log
+
+# Never commit Codex account/runtime state.
+.codex/
+.codex-second/
+auth.json
+sessions/
+archived_sessions/
+session_index.jsonl
+history.jsonl
+state_*.sqlite*
+logs_*.sqlite*
+log/
+cache/
+.tmp/
+tmp/
+shell_snapshots/
+worktrees/
