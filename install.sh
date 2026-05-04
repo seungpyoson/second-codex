@@ -36,15 +36,26 @@ link_shared_path() {
 link_shared_path memories
 link_shared_path memories_extensions
 
-ZSHRC="${ZSHRC:-$HOME/.zshrc}"
 LINE="source $(shell_quote "$INSTALL_ROOT/second-codex-shell.zsh")"
 LEGACY_LINE="source $INSTALL_ROOT/second-codex-shell.zsh"
-if [ -f "$ZSHRC" ] && { grep -Fxq "$LINE" "$ZSHRC" || grep -Fxq "$LEGACY_LINE" "$ZSHRC"; }; then
-  echo "second-codex shell helper already sourced in $ZSHRC"
-else
-  printf '\n%s\n' "$LINE" >> "$ZSHRC"
-  echo "Added shell helper source line to $ZSHRC"
+
+ensure_source_line() {
+  local file="$1"
+  if [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
+    echo "second-codex shell helper already sourced in $file"
+  else
+    printf '\n%s\n' "$LINE" >> "$file"
+    echo "Added shell helper source line to $file"
+  fi
+}
+
+ZSHRC="${ZSHRC:-$HOME/.zshrc}"
+ZSHENV="${ZSHENV:-$HOME/.zshenv}"
+ensure_source_line "$ZSHENV"
+if [[ "$ZSHRC" != "$ZSHENV" ]]; then
+  ensure_source_line "$ZSHRC"
 fi
 
 echo "Installed second-codex to $INSTALL_ROOT"
-echo "Open a new shell or run: source $INSTALL_ROOT/second-codex-shell.zsh"
+echo "New zsh sessions can now use second-codex from any directory."
+echo "For this already-open shell, run: source $INSTALL_ROOT/second-codex-shell.zsh"

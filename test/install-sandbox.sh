@@ -10,6 +10,7 @@ SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
 CODEX_A_HOME="$SANDBOX/home/.codex" \
 SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
+ZSHENV="$SANDBOX/home/.zshenv" \
 "$REPO_ROOT/install.sh" >"$SANDBOX/install.out"
 
 test -x "$SANDBOX/install \"root/second-codex"
@@ -62,5 +63,11 @@ grep -Fq "installed-helper:_session-hint second " "$SANDBOX/helper.log"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshrc.log" \
   zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/home/.zshrc"
 grep -Fxq "installed-helper:login status" "$SANDBOX/zshrc.log"
+
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshenv.log" \
+HOME="$SANDBOX/home" \
+ZDOTDIR="$SANDBOX/home" \
+  zsh -c 'second-codex login status'
+grep -Fxq "installed-helper:login status" "$SANDBOX/zshenv.log"
 
 echo "PASS install sandbox"

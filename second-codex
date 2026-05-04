@@ -913,13 +913,14 @@ session_id=$session_id
 copied_session=$primary_session_file
 resume_primary_interactive=codex resume $session_id
 resume_primary_exec=codex exec resume $session_id
+resume_second_interactive=second-codex resume $session_id
 EOF
 }
 
 session_hint() {
   local account="${1:-}"
   local cwd_filter="${2:-}"
-  local home label resume handoff session_id
+  local home label resume_primary resume_second handoff session_id
   case "$account" in
     primary)
       home="$A_HOME"
@@ -945,12 +946,13 @@ session_hint() {
   rm -f "$hint_error"
   trap - RETURN
   [[ -n "$session_id" ]] || return 0
-  resume="codex resume $session_id"
-  handoff="second-codex handoff $session_id && $resume"
+  resume_primary="codex resume $session_id"
+  resume_second="second-codex resume $session_id"
+  handoff="second-codex handoff $session_id && $resume_primary"
   if [[ "$account" == "primary" ]]; then
-    printf '\n%s session_id=%s\nresume=%s\n' "$label" "$session_id" "$resume"
+    printf '\n%s session_id=%s\nresume_primary=%s\nresume_second=%s\n' "$label" "$session_id" "$resume_primary" "$resume_second"
   else
-    printf '\n%s session_id=%s\nhandoff_to_primary=%s\n' "$label" "$session_id" "$handoff"
+    printf '\n%s session_id=%s\nresume_second=%s\nhandoff_to_primary=%s\n' "$label" "$session_id" "$resume_second" "$handoff"
   fi
 }
 

@@ -32,7 +32,11 @@ Account/auth operations remain blocked. Run account/auth changes explicitly from
 
 ## Usage
 
-After loading the shell helper:
+After installation, new zsh sessions load the shell helper automatically from `~/.zshenv`, so `second-codex` is available from any project directory. For an already-open shell, run:
+
+```bash
+source ~/.codex-account-switch/second-codex-shell.zsh
+```
 
 ```bash
 codex
@@ -42,6 +46,13 @@ second-codex exec "Reply with exactly: second-codex ok"
 ```
 
 The shell helper wraps both `codex` and `second-codex`. After an interactive, prompt, `exec`, or `resume` run exits, it prints the most recent matching session id for the current directory. Setup/status commands such as `login status`, `mcp`, `features`, and `plugin` do not print session hints.
+
+Resume directions:
+
+- Primary to primary: `codex resume <session_id>`
+- Second to second: `second-codex resume <session_id>`
+- Primary to second: `second-codex resume <session_id>`; the wrapper imports the selected primary transcript into second runtime first.
+- Second to primary: `second-codex handoff <session_id> && codex resume <session_id>`
 
 ## Session Handoff
 
@@ -87,7 +98,7 @@ The doctor checks account homes, unknown top-level entries, shared memory symlin
 
 ## Rollback
 
-Remove the shell helper line from `~/.zshrc`, then remove the second-account files if no longer needed:
+Remove the shell helper line from `~/.zshenv` and `~/.zshrc`, then remove the second-account files if no longer needed:
 
 ```bash
 rm -f ~/.codex-account-switch/second-codex
