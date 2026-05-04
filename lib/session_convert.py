@@ -207,6 +207,33 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
 
 
+def _bump_ts_ms(ts: str, n: int) -> str:
+    """Return ts shifted forward by n milliseconds, preserving '...Z' shape.
+
+    Used so multiple converted records derived from a single source record
+    carry distinct timestamps in source order, instead of all sharing the
+    same string. Defensive on malformed input — returns ts unchanged when
+    the expected '...HH:MM:SS.mmmZ' or '...HH:MM:SSZ' shape is not present.
+    """
+    if n <= 0 or not ts.endswith("Z"):
+        return ts
+    head, dot, rest = ts[:-1].rpartition(".")
+    if not dot:
+        # No fractional component; treat .000 as the baseline.
+        new_ms = min(n, 999)
+        return f"{ts[:-1]}.{new_ms:03d}Z"
+    try:
+        ms = int(rest)
+    except ValueError:
+        return ts
+    new_ms = ms + n
+    if new_ms >= 1000:
+        # Cap at .999 rather than rolling into seconds; > 999 emissions per
+        # source record is unrealistic for any session.
+        new_ms = 999
+    return f"{head}.{new_ms:03d}Z"
+
+
 def codex_rollout_path(new_uuid: str) -> Path:
     """Build the canonical Codex rollout path for a new UUID under today's date dir."""
     now = time.gmtime()
@@ -244,10 +271,10 @@ def _records_after_aborts_filtered(records: list[dict[str, Any]]) -> list[dict[s
             payload = r.get("payload", {}) if isinstance(r.get("payload"), dict) else {}
             ptype = payload.get("type")
         # Real Codex rollouts emit task_started / task_complete / turn_aborted
-        # nested inside event_msg.payload.type — corpus scan over the local
-        # session store (501 files) found 0 top-level vs 14577/14011/535 nested
-        # respectively. The top-level alternatives are kept defensively in case
-        # an older or future Codex version emits the simpler shape.
+        # nested inside event_msg.payload.type (verified by corpus scan at
+        # development time — every observed instance was nested, none top-
+        # level). The top-level alternatives are kept defensively in case an
+        # older or future Codex version emits the simpler shape.
         if rtype == "task_started" or ptype == "task_started":
             pending_start = i
         elif rtype == "task_complete" or ptype == "task_complete":
@@ -538,7 +565,13 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         # Preserve the source record's timestamp so converted records inherit
         # the original ordering. Falls back to now_iso() when missing.
         ts_field = r.get("timestamp")
-        src_ts = ts_field if isinstance(ts_field, str) else now_iso()
+        src_ts_raw = ts_field if isinstance(ts_field, str) else now_iso()
+        # Multiple output records can be derived from a single source record
+        # (e.g. an assistant turn with text + tool_use). emit_n bumps the
+        # timestamp by 1ms per emission so the converted records remain
+        # distinguishable in source order, matching real Codex rollouts that
+        # give every record a distinct time.
+        emit_n = 0
         rtype = r.get("type")
         message = r.get("message")
         if not isinstance(message, dict):
@@ -564,7 +597,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 joined = "\n".join(p for p in text_parts if p)
                 if joined.strip():
                     out.append({
-                        "timestamp": src_ts,
+                        "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                         "type": "event_msg",
                         "payload": {
                             "type": "user_message",
@@ -572,6 +605,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                             "images": [], "local_images": [], "text_elements": [],
                         },
                     })
+                    emit_n += 1
             for tr in tool_results:
                 tool_use_id = tr.get("tool_use_id", "")
                 output = tr.get("content")
@@ -585,7 +619,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     # Companion fold for an unmapped tool. Render result as
                     # a user-message text block describing the result.
                     out.append({
-                        "timestamp": src_ts,
+                        "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                         "type": "event_msg",
                         "payload": {
                             "type": "user_message",
@@ -593,13 +627,14 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                             "images": [], "local_images": [], "text_elements": [],
                         },
                     })
+                    emit_n += 1
                     continue
                 if call_id is None:
                     # Orphan tool_result (no matching tool_use seen). Fall
                     # back to a fresh call_id so the rollout still validates.
                     call_id = gen_codex_call_id()
                 out.append({
-                    "timestamp": src_ts,
+                    "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                     "type": "response_item",
                     "payload": {
                         "type": "function_call_output",
@@ -607,6 +642,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                         "output": output_str,
                     },
                 })
+                emit_n += 1
         elif rtype == "assistant" and role == "assistant":
             text_parts = []
             tool_uses = []
@@ -623,7 +659,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 joined = "\n".join(p for p in text_parts if p)
                 if joined.strip():
                     out.append({
-                        "timestamp": src_ts,
+                        "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                         "type": "response_item",
                         "payload": {
                             "type": "message",
@@ -632,6 +668,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                             "phase": "commentary",
                         },
                     })
+                    emit_n += 1
             for tu in tool_uses:
                 tool_use_id = tu.get("id", "")
                 tool_name_claude = tu.get("name", "")
@@ -642,7 +679,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     call_id = gen_codex_call_id()
                     tool_id_to_call_id[tool_use_id] = call_id
                     out.append({
-                        "timestamp": src_ts,
+                        "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                         "type": "response_item",
                         "payload": {
                             "type": "function_call",
@@ -651,6 +688,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                             "call_id": call_id,
                         },
                     })
+                    emit_n += 1
                 else:
                     # Fold unmapped Claude tool into Codex assistant text. Codex
                     # may not accept arbitrary tool names from a foreign tool
@@ -658,7 +696,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     tool_id_to_call_id[tool_use_id] = "__unmapped__"
                     preview = json.dumps(input_obj) if isinstance(input_obj, (dict, list)) else str(input_obj)
                     out.append({
-                        "timestamp": src_ts,
+                        "timestamp": _bump_ts_ms(src_ts_raw, emit_n),
                         "type": "response_item",
                         "payload": {
                             "type": "message",
@@ -668,6 +706,7 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                             "phase": "commentary",
                         },
                     })
+                    emit_n += 1
         # Drop attachment, file-history-snapshot, system, queue-operation, etc.
 
     target_path = codex_rollout_path(new_uuid)
@@ -677,6 +716,10 @@ def claude_to_codex(src: Path, target_cwd: str | None = None) -> tuple[Path, str
 
 def _normalize_tool_input_to_codex(tool_name: str, input_obj: dict[str, Any], cwd: str) -> dict[str, Any]:
     if tool_name == "Bash":
+        # workdir is lossy on cross-vendor: Claude's Bash tool input has no
+        # per-call workdir field, so every converted exec_command call inherits
+        # the session-level cwd. If the user `cd`'d mid-session, real per-call
+        # workdirs are not recoverable from the Claude transcript.
         return {
             "cmd": input_obj.get("command", ""),
             "workdir": cwd,

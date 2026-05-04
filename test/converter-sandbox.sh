@@ -670,4 +670,77 @@ assert preserved, f"no source timestamp preserved; got {ts_values!r}"
 print(f"source timestamps preserved on {len(preserved)} record(s) PASSED")
 EOF
 
+# ---------------------------------------------------------------------------
+# R (S1): distinct per-emission timestamps. When a single Claude assistant
+# record carries text + tool_use, the converted Codex rollout must emit
+# multiple records with distinct timestamps (real Codex rollouts always do
+# — same-time stamps look anomalous to readers and to anything that orders
+# by ts secondarily).
+# ---------------------------------------------------------------------------
+TR_UUID="00000000-0000-4000-8000-00000000002a"
+TR_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TR_UUID.jsonl"
+cat > "$TR_PATH" <<'EOF'
+{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"00000000-0000-4000-8000-00000000002a","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2025-03-01T08:00:00.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"do work"}]}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"00000000-0000-4000-8000-00000000002a","cwd":"/tmp/sandbox-project","version":"1.0.0","userType":"external","timestamp":"2025-03-01T08:00:01.000Z","isSidechain":false,"requestId":"req_t","message":{"id":"m1","type":"message","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"thinking out loud"},{"type":"tool_use","id":"toolu_dist1","name":"Bash","input":{"command":"ls"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":10}}}
+EOF
+
+OUT="$SANDBOX/distinct-ts.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" claude-to-codex "$TR_UUID" >"$OUT" 2>&1
+TR_NEW_PATH="$(grep '^converted:' "$OUT" | awk -F'-> ' '{print $2}')"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TR_NEW_PATH") if l.strip()]
+# Two response_item records derive from the assistant turn (text + tool_use)
+# and must carry distinct, monotonic timestamps anchored at the source ts.
+ts_2025 = [r["timestamp"] for r in records if r["timestamp"].startswith("2025-03-01T08:00:01")]
+assert len(ts_2025) == 2, f"expected 2 records derived from assistant ts; got {ts_2025}"
+assert ts_2025[0] != ts_2025[1], f"derived records share timestamp {ts_2025[0]!r}"
+assert ts_2025[0] < ts_2025[1], f"derived ts not monotonic: {ts_2025}"
+print(f"distinct per-emission timestamps PASSED ({ts_2025[0]} < {ts_2025[1]})")
+EOF
+
+# ---------------------------------------------------------------------------
+# S (S4): now_iso() fallback when a source record has no `timestamp` field.
+# Without the fallback the converted record could carry an empty string for
+# timestamp (downstream tools expect ISO-Z shape).
+# ---------------------------------------------------------------------------
+TS_UUID="00000000-0000-7000-8000-00000000002b"
+TS_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-12-00-$TS_UUID.jsonl"
+cat > "$TS_PATH" <<EOF
+{"timestamp":"2020-06-15T12:00:00.000Z","type":"session_meta","payload":{"id":"$TS_UUID","timestamp":"2020-06-15T12:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"type":"event_msg","payload":{"type":"user_message","message":"no-ts marker","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2020-06-15T12:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"with-ts marker","images":[],"local_images":[],"text_elements":[]}}
+EOF
+
+OUT="$SANDBOX/no-ts.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TS_UUID" >"$OUT" 2>&1
+TS_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TS_NEW_PATH="$CLAUDE_HOME/projects/$(printf %s "$CWD" | tr / -)/$TS_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TS_NEW_PATH") if l.strip()]
+texts_to_ts = {}
+for r in records:
+    msg = r.get("message", {})
+    for b in msg.get("content", []):
+        if isinstance(b, dict) and b.get("type") == "text":
+            texts_to_ts[b["text"]] = r["timestamp"]
+assert "no-ts marker" in texts_to_ts, f"no-ts record missing; got {list(texts_to_ts)}"
+assert "with-ts marker" in texts_to_ts, f"with-ts record missing; got {list(texts_to_ts)}"
+# The with-ts record preserves source year (2020).
+assert texts_to_ts["with-ts marker"].startswith("2020-06-15"), \
+    f"with-ts source timestamp not preserved: {texts_to_ts['with-ts marker']!r}"
+# The no-ts record falls back to a 'now-ish' timestamp — must NOT carry source year.
+assert not texts_to_ts["no-ts marker"].startswith("2020-"), \
+    f"no-ts record should fall back to now_iso(), got {texts_to_ts['no-ts marker']!r}"
+# Sanity: the fallback shape is ISO-Z, not empty.
+assert texts_to_ts["no-ts marker"].endswith("Z") and len(texts_to_ts["no-ts marker"]) >= 20, \
+    f"no-ts fallback ts malformed: {texts_to_ts['no-ts marker']!r}"
+print("now_iso() fallback for missing-timestamp records PASSED")
+EOF
+
 echo "all converter sandbox tests passed"
