@@ -847,8 +847,9 @@ echo "session-id resolves symlinked cwd against physical-path rollout PASSED"
 
 # ---------------------------------------------------------------------------
 # session-id _SESSION_ID_RE direct regex unit test (PR #7 round 2):
-# Round-1 panel (Gemini) flagged the original glob-guard integration
-# test below as vacuous: target_id is appended last to history.jsonl
+# Round-2 panel (Gemini [BUG], DeepSeek, Kimi) flagged the original
+# glob-guard integration test below as vacuous: target_id is appended
+# last to history.jsonl
 # but the heredoc reads via `reversed(lines)` so target gets rank 0
 # and is processed first; the inner `payload.get("id") != session_id`
 # resilience also catches malformed entries silently. The integration
@@ -897,6 +898,7 @@ for bad in [
     "01234567-89ab-cdef-0123-456789abcde",     # one short in the last group
     "g1234567-89ab-cdef-0123-456789abcdef",    # non-hex char
     "{01234567-89ab-cdef-0123-456789abcdef}",  # brace-wrapped variant
+    "0123456789abcdef0123456789abcdef",        # 32 hex, no hyphens (GLM round-3)
 ]:
     if pat.match(bad):
         print(f"FAIL regex should reject {bad!r}")
