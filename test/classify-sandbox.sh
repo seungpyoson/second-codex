@@ -195,13 +195,12 @@ set +e
 run_wrapper >"$empty_args_out" 2>&1
 empty_args_rc=$?
 set -e
-if grep -q "unbound variable" "$empty_args_out"; then
-  echo "FAIL second-codex (no args) errored with unbound variable" >&2
-  cat "$empty_args_out" >&2
-  exit 1
-fi
 if (( empty_args_rc != 0 )); then
-  echo "FAIL second-codex (no args) exited $empty_args_rc" >&2
+  if grep -q "unbound variable" "$empty_args_out"; then
+    echo "FAIL second-codex (no args) errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex (no args) exited $empty_args_rc" >&2
+  fi
   cat "$empty_args_out" >&2
   exit 1
 fi
@@ -216,17 +215,39 @@ set +e
 run_wrapper mcp >"$setup_no_subargs_out" 2>&1
 setup_no_subargs_rc=$?
 set -e
-if grep -q "unbound variable" "$setup_no_subargs_out"; then
-  echo "FAIL second-codex mcp errored with unbound variable" >&2
-  cat "$setup_no_subargs_out" >&2
-  exit 1
-fi
 if (( setup_no_subargs_rc != 0 )); then
-  echo "FAIL second-codex mcp exited $setup_no_subargs_rc" >&2
+  if grep -q "unbound variable" "$setup_no_subargs_out"; then
+    echo "FAIL second-codex mcp errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex mcp exited $setup_no_subargs_rc" >&2
+  fi
   cat "$setup_no_subargs_out" >&2
   exit 1
 fi
 assert_grep "rerouting environment/config change" "$setup_no_subargs_out"
 assert_grep "^home=$SANDBOX/home-a args=mcp$" "$SANDBOX/codex.log"
+
+# Regression guard: classify_known_command is normally reached with a command
+# token, but a direct no-arg helper call should still fall through cleanly
+# instead of reading `$1` under nounset.
+classify_known_probe="$SANDBOX/classify-known-probe"
+awk '
+  $0 == "main \"$@\"" {
+    print "classify_known_command \"$@\""
+    next
+  }
+  { print }
+' "$REPO_ROOT/second-codex" > "$classify_known_probe"
+chmod 700 "$classify_known_probe"
+set +e
+"$classify_known_probe" >"$SANDBOX/classify-known-no-args.out" 2>&1
+classify_known_no_args_rc=$?
+set -e
+if (( classify_known_no_args_rc != 0 )); then
+  echo "FAIL classify_known_command no-args exited $classify_known_no_args_rc" >&2
+  cat "$SANDBOX/classify-known-no-args.out" >&2
+  exit 1
+fi
+assert_grep "^second$" "$SANDBOX/classify-known-no-args.out"
 
 echo "PASS classify sandbox"

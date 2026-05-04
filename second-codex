@@ -311,6 +311,10 @@ token_is_runtime_mutation() {
 }
 
 classify_known_command() {
+  if (( $# == 0 )); then
+    echo second
+    return 0
+  fi
   local command="$1"
   shift || true
   local has_status=0 has_setup=0 token
@@ -356,12 +360,12 @@ classify_known_command() {
   fi
 
   if token_is_setup_command "$command"; then
-    # Callers pass `command`; this guard covers a setup command whose sub-arg
-    # tail is empty after `shift`. The count-first loop is safe today, and the
-    # early return documents the existing no-subcommand reroute default.
+    # A setup command with no subcommand has the existing reroute default. Keep
+    # this boundary before any future parser refactor can value-expand an empty
+    # setup-argument tail under bash 3.2 nounset.
     if (( $# == 0 )); then
       echo reroute
-      return
+      return 0
     fi
     local subcommand="" marketplace_subcommand="" after_separator=0
     # Keep the zero-arg guard above if this loop ever switches from count-first
@@ -428,7 +432,7 @@ classify_command() {
   # function declaration line, which makes the failure look like assignment.
   if (( $# == 0 )); then
     echo second
-    return
+    return 0
   fi
   # Keep the zero-arg guard above before any `for arg in "${args[@]}"` value
   # expansion.
@@ -1024,8 +1028,8 @@ EOF
 
 find_session_id_after_resume_command() {
   # A resume command can leave an empty tail for session-id discovery. The
-  # count-first loop is safe today, and the early return documents the existing
-  # "no session id found" default.
+  # early return documents the existing "no session id found" default before
+  # copying the tail into an args array.
   if (( $# == 0 )); then
     return 1
   fi
@@ -1077,9 +1081,9 @@ find_session_id_after_resume_command() {
 }
 
 find_resume_session_arg() {
-  # Plain `resume` can call this with an empty argument list. The count-first
-  # loop is safe today, and the early return documents the existing "no session
-  # id found" default.
+  # Plain `resume` can call this with an empty argument list. The early return
+  # documents the existing "no session id found" default before copying the
+  # arguments into an args array.
   if (( $# == 0 )); then
     return 1
   fi
