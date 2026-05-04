@@ -369,19 +369,24 @@ classify_known_command() {
 
 classify_command() {
   local args=("$@")
-  local i=0 saw_ambiguous_option=0 arg
+  local i=0 saw_ambiguous_option=0 saw_separator=0 arg
   while (( i < ${#args[@]} )); do
     arg="${args[$i]}"
     case "$arg" in
       --)
+        saw_separator=1
         i=$((i + 1))
         ;;
       --*=*)
-        option_is_auth_mutation "$arg" && { echo block; return; }
+        if (( ! saw_separator )); then
+          option_is_auth_mutation "$arg" && { echo block; return; }
+        fi
         i=$((i + 1))
         ;;
       -*)
-        option_is_auth_mutation "$arg" && { echo block; return; }
+        if (( ! saw_separator )); then
+          option_is_auth_mutation "$arg" && { echo block; return; }
+        fi
         if option_takes_no_value "$arg"; then
           i=$((i + 1))
         elif option_takes_value "$arg" && (( i + 1 < ${#args[@]} )); then
@@ -397,7 +402,6 @@ classify_command() {
           return
         fi
         if (( saw_ambiguous_option )); then
-          saw_ambiguous_option=0
           i=$((i + 1))
           continue
         fi
