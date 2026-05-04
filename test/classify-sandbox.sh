@@ -94,9 +94,9 @@ assert_blocked flag-oauth --oauth-redirect=http://example.test chat
 assert_blocked flag-signout --signout chat
 assert_blocked flag-reconnect --reconnect chat
 assert_blocked flag-sign-out --sign-out chat
-assert_blocked separator-login -- login
-assert_blocked separator-logout -- logout
-assert_blocked separator-mcp-oauth -- mcp oauth
+assert_second separator-login -- login
+assert_second separator-logout -- logout
+assert_second separator-mcp-oauth -- mcp oauth
 assert_blocked unknown-chain-login --unk1 v1 unk2 login
 assert_blocked unknown-chain-oauth --unk1 v1 unk2 oauth
 assert_blocked unknown-chain-mcp-oauth --unk1 v1 unk2 mcp oauth
@@ -132,6 +132,8 @@ assert_second separator-prompt -- please login
 assert_second separator-update-prompt -- help me update the plugin config
 assert_second top-level-separator-flag -- --login
 assert_second top-level-separator-auth-token -- --auth-token=secret
+assert_second top-level-separator-flag-prompt -- --login please login
+assert_second top-level-separator-auth-prompt -- --auth-token=secret please mcp oauth
 assert_second exec-separator-flag exec -- --login
 assert_second chat-separator-flag chat -- --auth-token=secret
 assert_second resume-separator-flag resume -- --login=foo 00000000-0000-7000-8000-000000000099
