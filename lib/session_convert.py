@@ -586,6 +586,9 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             return [{"type": string_block_type, "text": content}]
         if isinstance(content, list):
             return content
+        # Malformed/future content containers have no portable text blocks.
+        # Drop them at the role handler rather than stringifying structured
+        # runtime data into the receiver transcript.
         return []
 
     def codex_user_text_echo(payload_obj: dict[str, Any]) -> str:
@@ -678,6 +681,10 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                     continue
                 btype = block.get("type")
                 text = block.get("text") or ""
+                # Historical Codex message payloads have appeared with
+                # input_text under assistant roles; keep accepting it as
+                # compatibility text while user-role messages own input_text
+                # in the normal schema.
                 if btype in ("output_text", "input_text") and text:
                     content_blocks.append({"type": "text", "text": text})
             if not content_blocks:
@@ -725,7 +732,9 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             role = payload.get("role")
             if isinstance(role, str):
                 _warn_unknown("response_item.message.role", role, warned_unknowns)
-            elif role is not None:
+            elif role is None:
+                _warn_unknown("response_item.message.role", "<missing>", warned_unknowns)
+            else:
                 # Surface malformed/future role shapes without echoing their
                 # value, since role-bearing records can contain runtime
                 # context that should not leak to stderr.
