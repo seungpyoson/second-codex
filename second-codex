@@ -168,7 +168,7 @@ ensure_shared_path() {
     echo "second-codex refused shared path because primary $target is not a directory." >&2
     return 73
   fi
-  mkdir -p "$target" "$B_HOME"
+  mkdir -p "$target" "$B_HOME" || return $?
   if [[ -L "$link" && "$(readlink "$link")" == "$target" ]]; then
     return 0
   fi
@@ -176,7 +176,7 @@ ensure_shared_path() {
     echo "second-codex refused to replace existing $link; move it aside, then rerun." >&2
     return 73
   fi
-  ln -s "$target" "$link"
+  ln -s "$target" "$link" || return $?
 }
 
 ensure_shared_paths() {
@@ -1497,7 +1497,7 @@ ensure_shim() {
   fi
   local tmp_shim
   tmp_shim="$(umask 077; mktemp "$BIN_DIR/codex.XXXXXX")" || return $?
-  cat > "$tmp_shim" <<'EOF'
+  cat > "$tmp_shim" <<'EOF' || return $?
 #!/usr/bin/env bash
 set -euo pipefail
 exec "${SECOND_CODEX_SWITCH_WRAPPER:?missing SECOND_CODEX_SWITCH_WRAPPER}" "$@"

@@ -24,6 +24,7 @@ WRAPPER_BASH="${SECOND_CODEX_TEST_BASH:-/bin/bash}"
 
 run_wrapper() {
   SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  SECOND_CODEX_MANIFEST="$REPO_ROOT/ownership-manifest.txt" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
