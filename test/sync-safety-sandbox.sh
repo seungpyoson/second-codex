@@ -15,12 +15,37 @@ chmod 700 "$MOCK_CODEX"
 
 run_wrapper() {
   SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  SECOND_CODEX_MANIFEST="$REPO_ROOT/ownership-manifest.txt" \
   CODEX_A_HOME="$1" \
   SECOND_CODEX_HOME="$2" \
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
   SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
   SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
   "$REPO_ROOT/second-codex" login status
+}
+
+NO_ERREXIT_WRAPPER="$SANDBOX/second-codex-no-errexit"
+awk '
+  $0 == "main \"$@\"" {
+    print "set +e"
+    print
+    found += 1
+    next
+  }
+  { print }
+  END { if (found != 1) exit 42 }
+' "$REPO_ROOT/second-codex" >"$NO_ERREXIT_WRAPPER"
+chmod 700 "$NO_ERREXIT_WRAPPER"
+
+run_no_errexit_session_id() {
+  SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  SECOND_CODEX_MANIFEST="$REPO_ROOT/ownership-manifest.txt" \
+  CODEX_A_HOME="$1" \
+  SECOND_CODEX_HOME="$2" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
+  "$NO_ERREXIT_WRAPPER" session-id --second
 }
 
 mkdir -p "$SANDBOX/empty-primary" "$SANDBOX/home-second"
@@ -30,6 +55,12 @@ TOML
 mkdir -p "$SANDBOX/empty-primary/memories" "$SANDBOX/empty-primary/memories_extensions"
 ln -s "$SANDBOX/empty-primary/memories" "$SANDBOX/home-second/memories"
 ln -s "$SANDBOX/empty-primary/memories_extensions" "$SANDBOX/home-second/memories_extensions"
+
+if run_wrapper "/" "$SANDBOX/home-second" >"$SANDBOX/root-primary.out" 2>&1; then
+  echo "FAIL root primary CODEX_HOME was not refused"
+  exit 1
+fi
+grep -q "refused root primary CODEX_HOME" "$SANDBOX/root-primary.out"
 
 if run_wrapper "$SANDBOX/empty-primary" "$SANDBOX/home-second" >"$SANDBOX/empty.out" 2>&1; then
   echo "FAIL sparse primary CODEX_HOME was not refused"
@@ -53,6 +84,23 @@ ln -s "$SANDBOX/real-primary" "$SANDBOX/a-symlink"
 ln -s "$SANDBOX/linked-second" "$SANDBOX/b-symlink"
 ln -s "$SANDBOX/real-primary/memories" "$SANDBOX/linked-second/memories"
 ln -s "$SANDBOX/real-primary/memories_extensions" "$SANDBOX/linked-second/memories_extensions"
+
+if run_wrapper "$SANDBOX/real-primary" "/" >"$SANDBOX/root-second.out" 2>&1; then
+  echo "FAIL root second CODEX_HOME was not refused"
+  exit 1
+fi
+grep -q "refused root second CODEX_HOME" "$SANDBOX/root-second.out"
+
+if run_no_errexit_session_id "$SANDBOX/real-primary" "$SANDBOX/real-primary" >"$SANDBOX/no-errexit-same-homes.out" 2>&1; then
+  echo "FAIL same CODEX_HOME was not refused with errexit disabled"
+  exit 1
+fi
+grep -q "refused to run because primary and second CODEX_HOME are the same" "$SANDBOX/no-errexit-same-homes.out"
+if grep -q "could not find Codex history" "$SANDBOX/no-errexit-same-homes.out"; then
+  echo "FAIL session-id body ran after same-home guard failed with errexit disabled" >&2
+  cat "$SANDBOX/no-errexit-same-homes.out" >&2
+  exit 1
+fi
 
 if run_wrapper "$SANDBOX/a-symlink" "$SANDBOX/real-second" >"$SANDBOX/a-symlink.out" 2>&1; then
   echo "FAIL symlinked primary CODEX_HOME was not refused"

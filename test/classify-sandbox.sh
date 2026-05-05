@@ -20,15 +20,17 @@ set -euo pipefail
 printf 'home=%s args=%s\n' "${CODEX_HOME:?missing CODEX_HOME}" "$*" >> "${SECOND_CODEX_TEST_LOG:?missing SECOND_CODEX_TEST_LOG}"
 SH
 chmod 700 "$MOCK_CODEX"
+WRAPPER_BASH="${SECOND_CODEX_TEST_BASH:-/bin/bash}"
 
 run_wrapper() {
   SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  SECOND_CODEX_MANIFEST="$REPO_ROOT/ownership-manifest.txt" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
   SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
   SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
   SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
-  "$REPO_ROOT/second-codex" "$@"
+  "$WRAPPER_BASH" "$REPO_ROOT/second-codex" "$@"
 }
 
 assert_grep() {
@@ -185,5 +187,162 @@ assert_blocked mcp-logout mcp logout
 assert_blocked plugin-auth plugin auth
 assert_blocked skill-login skill login
 assert_blocked app-oauth app oauth
+
+# Regression guard: empty-args wrapper invocation must not crash under bash 3.2
+# nounset. The crash trigger is downstream `"${args[@]}"` value expansion after
+# `local args=("$@")` receives zero elements.
+: > "$SANDBOX/codex.log"
+empty_args_out="$SANDBOX/empty-args.out"
+set +e
+run_wrapper >"$empty_args_out" 2>&1
+empty_args_rc=$?
+set -e
+if (( empty_args_rc != 0 )); then
+  if grep -q "unbound variable" "$empty_args_out"; then
+    echo "FAIL second-codex (no args) errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex (no args) exited $empty_args_rc" >&2
+  fi
+  cat "$empty_args_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=$" "$SANDBOX/codex.log"
+
+# Smoke test: setup commands with no sub-args must reroute cleanly. The current
+# classify_known_command loop is count-first, so this is not load-bearing for
+# the bash 3.2 value-expansion guard; see the per-site comment in second-codex.
+: > "$SANDBOX/codex.log"
+setup_no_subargs_out="$SANDBOX/setup-no-subargs.out"
+set +e
+run_wrapper mcp >"$setup_no_subargs_out" 2>&1
+setup_no_subargs_rc=$?
+set -e
+if (( setup_no_subargs_rc != 0 )); then
+  if grep -q "unbound variable" "$setup_no_subargs_out"; then
+    echo "FAIL second-codex mcp errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex mcp exited $setup_no_subargs_rc" >&2
+  fi
+  cat "$setup_no_subargs_out" >&2
+  exit 1
+fi
+assert_grep "rerouting environment/config change" "$setup_no_subargs_out"
+assert_grep "^home=$SANDBOX/home-a args=mcp$" "$SANDBOX/codex.log"
+
+# Smoke test: `resume` with no session id reaches an empty tail slice before
+# find_session_id_after_resume_command. Bash 3.2 accepts that empty slice; the
+# finder guard documents the "no session id found" default.
+: > "$SANDBOX/codex.log"
+resume_no_session_out="$SANDBOX/resume-no-session.out"
+set +e
+run_wrapper resume >"$resume_no_session_out" 2>&1
+resume_no_session_rc=$?
+set -e
+if (( resume_no_session_rc != 0 )); then
+  if grep -q "unbound variable" "$resume_no_session_out"; then
+    echo "FAIL second-codex resume errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex resume exited $resume_no_session_rc" >&2
+  fi
+  cat "$resume_no_session_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=resume$" "$SANDBOX/codex.log"
+
+# Smoke test: the nested `exec resume` parser arm has its own empty-tail slice
+# before find_session_id_after_resume_command. Pin both command spellings so the
+# top-level resume path is not the only covered slice site.
+: > "$SANDBOX/codex.log"
+exec_resume_no_session_out="$SANDBOX/exec-resume-no-session.out"
+set +e
+run_wrapper exec resume >"$exec_resume_no_session_out" 2>&1
+exec_resume_no_session_rc=$?
+set -e
+if (( exec_resume_no_session_rc != 0 )); then
+  if grep -q "unbound variable" "$exec_resume_no_session_out"; then
+    echo "FAIL second-codex exec resume errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex exec resume exited $exec_resume_no_session_rc" >&2
+  fi
+  cat "$exec_resume_no_session_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=exec resume$" "$SANDBOX/codex.log"
+
+: > "$SANDBOX/codex.log"
+exec_alias_resume_no_session_out="$SANDBOX/e-resume-no-session.out"
+set +e
+run_wrapper e resume >"$exec_alias_resume_no_session_out" 2>&1
+exec_alias_resume_no_session_rc=$?
+set -e
+if (( exec_alias_resume_no_session_rc != 0 )); then
+  if grep -q "unbound variable" "$exec_alias_resume_no_session_out"; then
+    echo "FAIL second-codex e resume errored with unbound variable" >&2
+  else
+    echo "FAIL second-codex e resume exited $exec_alias_resume_no_session_rc" >&2
+  fi
+  cat "$exec_alias_resume_no_session_out" >&2
+  exit 1
+fi
+assert_grep "^home=$SANDBOX/home-second args=e resume$" "$SANDBOX/codex.log"
+
+# Regression guard: classify_known_command is normally reached with a command
+# token, but a direct no-arg helper call should still fall through cleanly
+# instead of reading `$1` under nounset.
+classify_known_probe="$SANDBOX/classify-known-probe"
+awk '
+  BEGIN { found = 0 }
+  $0 == "main \"$@\"" {
+    found += 1
+    print "classify_known_command \"$@\""
+    next
+  }
+  { print }
+  END { if (found != 1) exit 42 }
+' "$REPO_ROOT/second-codex" > "$classify_known_probe" || {
+  echo "FAIL classify_known_command probe could not replace exactly one entrypoint" >&2
+  exit 1
+}
+chmod 700 "$classify_known_probe"
+set +e
+"$WRAPPER_BASH" "$classify_known_probe" >"$SANDBOX/classify-known-no-args.out" 2>&1
+classify_known_no_args_rc=$?
+set -e
+if (( classify_known_no_args_rc != 0 )); then
+  echo "FAIL classify_known_command no-args exited $classify_known_no_args_rc" >&2
+  cat "$SANDBOX/classify-known-no-args.out" >&2
+  exit 1
+fi
+assert_grep "^second$" "$SANDBOX/classify-known-no-args.out"
+
+# Regression guard: the resume helper defaults are "no session id found" when
+# called directly with no arguments. Keep this next to the wrapper-level resume
+# smoke test so future parser refactors retain both entry points.
+resume_helper_probe="$SANDBOX/resume-helper-probe"
+awk '
+  BEGIN { found = 0 }
+  $0 == "main \"$@\"" {
+    found += 1
+    print "find_session_id_after_resume_command \"$@\" && exit 20"
+    print "find_resume_session_arg \"$@\" && exit 21"
+    print "exit 0"
+    next
+  }
+  { print }
+  END { if (found != 1) exit 42 }
+' "$REPO_ROOT/second-codex" > "$resume_helper_probe" || {
+  echo "FAIL resume helper probe could not replace exactly one entrypoint" >&2
+  exit 1
+}
+chmod 700 "$resume_helper_probe"
+set +e
+"$WRAPPER_BASH" "$resume_helper_probe" >"$SANDBOX/resume-helper-no-args.out" 2>&1
+resume_helper_no_args_rc=$?
+set -e
+if (( resume_helper_no_args_rc != 0 )); then
+  echo "FAIL resume helper no-args exited $resume_helper_no_args_rc" >&2
+  cat "$SANDBOX/resume-helper-no-args.out" >&2
+  exit 1
+fi
 
 echo "PASS classify sandbox"

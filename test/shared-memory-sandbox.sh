@@ -18,6 +18,19 @@ printf 'home=%s account=%s active=%s args=%s\n' "${CODEX_HOME:?missing CODEX_HOM
 SH
 chmod 700 "$MOCK_CODEX"
 
+NO_ERREXIT_WRAPPER="$SANDBOX/second-codex-no-errexit"
+awk '
+  $0 == "main \"$@\"" {
+    print "set +e"
+    print
+    found += 1
+    next
+  }
+  { print }
+  END { if (found != 1) exit 42 }
+' "$REPO_ROOT/second-codex" >"$NO_ERREXIT_WRAPPER"
+chmod 700 "$NO_ERREXIT_WRAPPER"
+
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
@@ -59,5 +72,26 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   exit 1
 fi
 grep -q "primary .*memories is not a directory" "$SANDBOX/primary-file.out"
+
+rm -rf "$SANDBOX/home-second"
+mkdir "$SANDBOX/home-second"
+echo "not a directory" > "$SANDBOX/home-a-file"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  SECOND_CODEX_MANIFEST="$REPO_ROOT/ownership-manifest.txt" \
+  CODEX_A_HOME="$SANDBOX/home-a-file" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
+  "$NO_ERREXIT_WRAPPER" exec should-not-run >"$SANDBOX/no-errexit-primary-file.out" 2>&1; then
+  echo "FAIL primary file CODEX_HOME was not refused with errexit disabled"
+  exit 1
+fi
+grep -q "Not a directory" "$SANDBOX/no-errexit-primary-file.out"
+if [[ -e "$SANDBOX/home-second/memories" || -L "$SANDBOX/home-second/memories" ]]; then
+  echo "FAIL shared memories link was created after primary mkdir failed with errexit disabled" >&2
+  cat "$SANDBOX/no-errexit-primary-file.out" >&2
+  exit 1
+fi
 
 echo "PASS shared memory sandbox"
