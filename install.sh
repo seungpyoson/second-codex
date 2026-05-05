@@ -91,8 +91,14 @@ marked_block_status() {
 
 replace_marked_block() {
   local file="$1"
-  local tmp_file
-  tmp_file="$(mktemp "${TMPDIR:-/tmp}/second-codex-zshrc.XXXXXX")" || return $?
+  if [[ -L "$file" ]]; then
+    return 73
+  fi
+  local parent_dir base_name tmp_file mode
+  parent_dir="$(dirname "$file")"
+  base_name="$(basename "$file")"
+  mode="$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file")" || return $?
+  tmp_file="$(mktemp "$parent_dir/.${base_name}.second-codex.XXXXXX")" || return $?
   if ! awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" -v line="$LINE" '
     $0 == begin && !replaced {
       print begin
@@ -110,11 +116,14 @@ replace_marked_block() {
     rm -f "$tmp_file"
     return 1
   fi
-  if ! cat "$tmp_file" > "$file"; then
+  if ! chmod "$mode" "$tmp_file"; then
     rm -f "$tmp_file"
     return 73
   fi
-  rm -f "$tmp_file"
+  if ! mv "$tmp_file" "$file"; then
+    rm -f "$tmp_file"
+    return 73
+  fi
 }
 
 ensure_source_line() {
