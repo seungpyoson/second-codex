@@ -7,6 +7,24 @@ SECOND_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
 SOURCE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PATH_DIR="${SECOND_CODEX_PATH_DIR:-$HOME/.local/bin}"
 
+normalize_path() {
+  local path="$1"
+  while [[ "$path" == */ && "$path" != "/" ]]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "$path"
+}
+
+INSTALL_ROOT="$(normalize_path "$INSTALL_ROOT")"
+PRIMARY_HOME="$(normalize_path "$PRIMARY_HOME")"
+SECOND_HOME="$(normalize_path "$SECOND_HOME")"
+PATH_DIR="$(normalize_path "$PATH_DIR")"
+
+if [[ "$PRIMARY_HOME" == "$SECOND_HOME" ]]; then
+  echo "second-codex refused to install because primary and second CODEX_HOME are the same: $PRIMARY_HOME" >&2
+  exit 73
+fi
+
 shell_quote() {
   local value="${1//\'/\'\\\'\'}"
   printf "'%s'" "$value"

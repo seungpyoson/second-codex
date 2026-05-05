@@ -5,6 +5,24 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/second-codex-install-sandbox.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 
+SAME_HOME="$SANDBOX/same-home"
+mkdir -p "$SAME_HOME"
+if HOME="$SAME_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$SAME_HOME/install-root/" \
+  CODEX_A_HOME="$SAME_HOME/codex" \
+  SECOND_CODEX_HOME="$SAME_HOME/codex/" \
+  ZSHRC="$SAME_HOME/.zshrc" \
+  "$REPO_ROOT/install.sh" >"$SANDBOX/same-home-install.out" 2>&1; then
+  echo "FAIL installer allowed primary and second CODEX_HOME to be the same"
+  cat "$SANDBOX/same-home-install.out"
+  exit 1
+fi
+grep -Fq "refused to install because primary and second CODEX_HOME are the same" "$SANDBOX/same-home-install.out"
+if [[ -e "$SAME_HOME/install-root/second-codex" ]]; then
+  echo "FAIL installer copied files before refusing identical CODEX_HOME values"
+  exit 1
+fi
+
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
 CODEX_A_HOME="$SANDBOX/home/.codex" \
