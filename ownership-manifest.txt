@@ -15,6 +15,7 @@ log/
 cache/
 .tmp/
 tmp/
+generated_images/
 installation_id
 .codex-global-state.json*
 ..codex-global-state.json*
