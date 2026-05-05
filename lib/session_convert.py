@@ -647,7 +647,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
             ev_ptype = payload.get("type")
             if ev_ptype == "user_message":
                 text = payload.get("message", "")
-                if not text:
+                if not isinstance(text, str) or not text:
                     continue
                 if response_item_user_echoes[text] > 0:
                     response_item_user_echoes[text] -= 1

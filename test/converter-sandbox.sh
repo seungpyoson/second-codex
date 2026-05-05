@@ -879,6 +879,8 @@ cat > "$TV_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:21.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":{"type":"output_text","text":"MALFORMED-ASSISTANT-CONTENT-DO-NOT-PORT"}}}
 {"timestamp":"2026-05-04T00:00:22.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":{"nested":"MALFORMED-USER-TEXT-DO-NOT-PORT"}}]}}
 {"timestamp":"2026-05-04T00:00:23.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":{"nested":"MALFORMED-ASSISTANT-TEXT-DO-NOT-PORT"}}]}}
+{"timestamp":"2026-05-04T00:00:24.000Z","type":"event_msg","payload":{"type":"user_message","message":{"nested":"MALFORMED-EVENT-MESSAGE-DO-NOT-PORT"},"images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:25.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"input_text","text":"ASSISTANT-INPUT-TEXT-COMPAT-MARKER-QUINCE"}],"phase":"commentary"}}
 EOF
 
 OUT="$SANDBOX/response-item-message.stdout"
@@ -909,6 +911,8 @@ assert "MALFORMED-USER-CONTENT-DO-NOT-PORT" not in joined, f"malformed user cont
 assert "MALFORMED-ASSISTANT-CONTENT-DO-NOT-PORT" not in joined, f"malformed assistant content leaked into target session: {texts}"
 assert "MALFORMED-USER-TEXT-DO-NOT-PORT" not in joined, f"malformed user block text leaked into target session: {texts}"
 assert "MALFORMED-ASSISTANT-TEXT-DO-NOT-PORT" not in joined, f"malformed assistant block text leaked into target session: {texts}"
+assert "MALFORMED-EVENT-MESSAGE-DO-NOT-PORT" not in joined, f"malformed event message leaked into target session: {texts}"
+assert "ASSISTANT-INPUT-TEXT-COMPAT-MARKER-QUINCE" in joined, f"assistant input_text compatibility text was lost: {texts}"
 print("response_item.message role dispatch PASSED")
 EOF
 
