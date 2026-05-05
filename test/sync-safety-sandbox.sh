@@ -12,6 +12,7 @@ set -euo pipefail
 printf 'home=%s args=%s\n' "${CODEX_HOME:?missing CODEX_HOME}" "$*" >> "${SECOND_CODEX_TEST_LOG:?missing log}"
 SH
 chmod 700 "$MOCK_CODEX"
+WRAPPER_BASH="${SECOND_CODEX_TEST_BASH:-/bin/bash}"
 
 run_wrapper() {
   SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
@@ -47,6 +48,57 @@ run_no_errexit_session_id() {
   SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
   "$NO_ERREXIT_WRAPPER" session-id --second
 }
+
+run_with_manifest() {
+  local manifest="$1"
+  SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  SECOND_CODEX_MANIFEST="$manifest" \
+  CODEX_A_HOME="$SANDBOX/manifest-primary" \
+  SECOND_CODEX_HOME="$SANDBOX/manifest-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  SECOND_CODEX_SWITCH_REAL_CODEX="$MOCK_CODEX" \
+  SECOND_CODEX_TEST_LOG="$SANDBOX/codex.log" \
+  "$WRAPPER_BASH" "$REPO_ROOT/second-codex" login status
+}
+
+assert_sparse_manifest_refused() {
+  local name="$1"
+  local manifest="$2"
+  local out="$SANDBOX/$name.out"
+  local rc
+  set +e
+  run_with_manifest "$manifest" >"$out" 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -ne 66 ]; then
+    echo "FAIL sparse manifest $name exited $rc instead of 66" >&2
+    cat "$out" >&2
+    exit 1
+  fi
+  grep -q "ownership manifest did not define required pattern groups" "$out" || {
+    echo "FAIL sparse manifest $name did not print the validation error" >&2
+    cat "$out" >&2
+    exit 1
+  }
+  if grep -q "unbound variable" "$out"; then
+    echo "FAIL sparse manifest $name crashed with bash nounset before validation" >&2
+    cat "$out" >&2
+    exit 1
+  fi
+}
+
+mkdir -p "$SANDBOX/manifest-primary" "$SANDBOX/manifest-second"
+cat > "$SANDBOX/manifest-missing-environment.txt" <<'MANIFEST'
+[account-runtime]
+auth.json
+MANIFEST
+cat > "$SANDBOX/manifest-missing-account.txt" <<'MANIFEST'
+[primary-owned-environment]
+config.toml
+MANIFEST
+
+assert_sparse_manifest_refused missing-environment-manifest "$SANDBOX/manifest-missing-environment.txt"
+assert_sparse_manifest_refused missing-account-manifest "$SANDBOX/manifest-missing-account.txt"
 
 mkdir -p "$SANDBOX/empty-primary" "$SANDBOX/home-second"
 cat > "$SANDBOX/home-second/config.toml" <<'TOML'

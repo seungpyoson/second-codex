@@ -6,7 +6,8 @@
 
 - Primary account home: `~/.codex`
 - Second account home: `~/.codex-second`
-- Wrapper: `~/.codex-account-switch/second-codex`
+- Installed wrapper: `~/.codex-account-switch/second-codex`
+- PATH entrypoint: `~/.local/bin/second-codex`
 
 ## Contract
 
@@ -32,7 +33,7 @@ Account/auth operations remain blocked. Run account/auth changes explicitly from
 
 ## Usage
 
-After installation, new zsh sessions load the shell helper automatically from `~/.zshenv`, so `second-codex` is available from any project directory. For an already-open shell, run:
+After installation, `second-codex` is available as a PATH command from `~/.local/bin/second-codex`. New zsh sessions also load the shell helper from `~/.zshrc` for interactive session hints. For an already-open shell, run:
 
 ```bash
 source ~/.codex-account-switch/second-codex-shell.zsh
@@ -46,6 +47,15 @@ second-codex exec "Reply with exactly: second-codex ok"
 ```
 
 The shell helper wraps both `codex` and `second-codex`. After an interactive, prompt, `exec`, or `resume` run exits, it prints the most recent matching session id for the current directory. Setup/status commands such as `login status`, `mcp`, `features`, and `plugin` do not print session hints.
+
+Updates:
+
+```bash
+second-codex update
+second-codex doctor
+```
+
+`install.sh` records the source checkout it was run from. `second-codex update` refreshes the installed wrapper, shell helper, manifest, PATH entrypoint, and marked `.zshrc` block from that recorded source. If the installed wrapper becomes stale, interactive runs warn once for the current source version and continue. `second-codex doctor` reports install freshness, shell-helper block status, and PATH entrypoint status.
 
 Resume directions:
 
@@ -150,7 +160,7 @@ The Claude `~/.claude/projects/<encoded-cwd>/` encoding rule was reverse-enginee
 - GitHub connector writes use the GitHub connector installation; avoid destructive GitHub actions unless explicitly intended.
 - Safe setup/config commands are rerouted to primary `~/.codex`; account/auth commands are blocked.
 - The subprocess shim is generated under a user-specific temp path such as `/tmp/second-codex-shim-501` with owner checks and restrictive permissions.
-- `ownership-manifest.txt` is the source of truth for account/runtime and environment ownership. Sync fails closed when either account home has unknown top-level entries.
+- `ownership-manifest.txt` is the default source of truth for account/runtime and environment ownership. Sync fails closed when either account home has unknown top-level entries. Use `SECOND_CODEX_MANIFEST` for local custom classification; `second-codex update` refreshes the bundled manifest and backs up a locally edited installed manifest before replacing it.
 - After Codex upgrades, run `second-codex doctor` to detect new top-level Codex state that needs classification.
 
 ## Doctor
@@ -165,10 +175,17 @@ The doctor checks account homes, unknown top-level entries, shared memory symlin
 
 ## Rollback
 
-Remove the shell helper line from `~/.zshenv` and `~/.zshrc`, then remove the second-account files if no longer needed:
+Remove the marked shell-helper block from `~/.zshrc`, then remove the PATH entrypoint and installed files if no longer needed:
+
+```zsh
+# >>> second-codex shell helper >>>
+source "$HOME/.codex-account-switch/second-codex-shell.zsh"
+# <<< second-codex shell helper <<<
+```
 
 ```bash
-rm -f ~/.codex-account-switch/second-codex
+rm -f ~/.local/bin/second-codex
+rm -rf ~/.codex-account-switch
 rm -rf ~/.codex-second
 ```
 

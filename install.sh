@@ -4,20 +4,108 @@ set -euo pipefail
 INSTALL_ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 PRIMARY_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 SECOND_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
+SOURCE_ROOT="$(cd "$(dirname "$0")" && pwd)"
+PATH_DIR="${SECOND_CODEX_PATH_DIR:-$HOME/.local/bin}"
+
+normalize_path() {
+  local path="$1"
+  while [[ "$path" == */ && "$path" != "/" ]]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "$path"
+}
+
+INSTALL_ROOT="$(normalize_path "$INSTALL_ROOT")"
+PRIMARY_HOME="$(normalize_path "$PRIMARY_HOME")"
+SECOND_HOME="$(normalize_path "$SECOND_HOME")"
+PATH_DIR="$(normalize_path "$PATH_DIR")"
+
+if [[ "$PRIMARY_HOME" == "$SECOND_HOME" ]]; then
+  echo "second-codex refused to install because primary and second CODEX_HOME are the same: $PRIMARY_HOME" >&2
+  exit 73
+fi
 
 shell_quote() {
   local value="${1//\'/\'\\\'\'}"
   printf "'%s'" "$value"
 }
 
+install_file() {
+  local src="$1"
+  local dest="$2"
+  local parent base tmp mode
+  parent="$(dirname "$dest")"
+  base="$(basename "$dest")"
+  mkdir -p "$parent"
+  mode="$(stat -f '%Lp' "$src" 2>/dev/null || stat -c '%a' "$src")" || return $?
+  tmp="$(umask 077; mktemp "$parent/.${base}.second-codex.XXXXXX")" || return $?
+  if ! cp "$src" "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! mv "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 73
+  fi
+}
+
+install_manifest() {
+  local src="$1"
+  local dest="$2"
+  local backup mode
+  if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
+    backup="$(umask 077; mktemp "$dest.local-backup-XXXXXX")" || return $?
+    mode="$(stat -f '%Lp' "$dest" 2>/dev/null || stat -c '%a' "$dest")" || {
+      rm -f "$backup"
+      return 73
+    }
+    if ! cp "$dest" "$backup"; then
+      rm -f "$backup"
+      return 73
+    fi
+    if ! chmod "$mode" "$backup"; then
+      rm -f "$backup"
+      return 73
+    fi
+  fi
+  install_file "$src" "$dest"
+}
+
+write_text_file_atomic() {
+  local dest="$1"
+  local content="$2"
+  local parent base tmp
+  parent="$(dirname "$dest")"
+  base="$(basename "$dest")"
+  mkdir -p "$parent"
+  tmp="$(umask 077; mktemp "$parent/.${base}.second-codex.XXXXXX")" || return $?
+  if ! printf '%s\n' "$content" > "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! chmod 600 "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! mv "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 73
+  fi
+}
+
 mkdir -p "$INSTALL_ROOT"
-cp "$(dirname "$0")/second-codex" "$INSTALL_ROOT/second-codex"
-cp "$(dirname "$0")/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
-cp "$(dirname "$0")/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
-cp "$(dirname "$0")/README.md" "$INSTALL_ROOT/README.md"
+install_file "$SOURCE_ROOT/second-codex" "$INSTALL_ROOT/second-codex"
+install_file "$SOURCE_ROOT/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
+install_manifest "$SOURCE_ROOT/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
+install_file "$SOURCE_ROOT/README.md" "$INSTALL_ROOT/README.md"
 mkdir -p "$INSTALL_ROOT/lib"
-cp "$(dirname "$0")/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
+install_file "$SOURCE_ROOT/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
 chmod +x "$INSTALL_ROOT/second-codex"
+write_text_file_atomic "$INSTALL_ROOT/source-root" "$SOURCE_ROOT"
 
 link_shared_path() {
   local name="$1"
@@ -38,16 +126,136 @@ link_shared_path() {
 link_shared_path memories
 link_shared_path memories_extensions
 
+ensure_path_entrypoint() {
+  local target="$PATH_DIR/second-codex"
+  local tmp_entrypoint
+  mkdir -p "$PATH_DIR"
+  if [[ -e "$target" && ! -f "$target" || -L "$target" ]]; then
+    echo "Refusing to replace unsafe PATH entrypoint: $target" >&2
+    return 73
+  fi
+  tmp_entrypoint="$(umask 077; mktemp "$PATH_DIR/second-codex.XXXXXX")" || return $?
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second CODEX_HOME=%s SECOND_CODEX_HOME=%s SECOND_CODEX_SWITCH_ROOT=%s exec %s "$@"\n' "$(shell_quote "$SECOND_HOME")" "$(shell_quote "$SECOND_HOME")" "$(shell_quote "$INSTALL_ROOT")" "$(shell_quote "$INSTALL_ROOT/second-codex")"
+  } > "$tmp_entrypoint" || { rm -f "$tmp_entrypoint"; return 73; }
+  if ! chmod 700 "$tmp_entrypoint"; then
+    rm -f "$tmp_entrypoint"
+    return 73
+  fi
+  if ! mv "$tmp_entrypoint" "$target"; then
+    rm -f "$tmp_entrypoint"
+    return 73
+  fi
+}
+
+ensure_path_entrypoint
+
 LINE="source $(shell_quote "$INSTALL_ROOT/second-codex-shell.zsh")"
 LEGACY_LINE="source $INSTALL_ROOT/second-codex-shell.zsh"
+MARKER_BEGIN="# >>> second-codex shell helper >>>"
+MARKER_END="# <<< second-codex shell helper <<<"
+DEFAULT_HOME_LINE='$HOME/.codex-account-switch/second-codex-shell.zsh'
+
+marked_block_status() {
+  local file="$1"
+  local default_home_ok=0
+  if [[ "$INSTALL_ROOT" == "$HOME/.codex-account-switch" ]]; then
+    default_home_ok=1
+  fi
+  awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" -v line="$LINE" -v legacy="$LEGACY_LINE" \
+    -v default_home_line="$DEFAULT_HOME_LINE" -v default_home_ok="$default_home_ok" '
+    $0 == begin { in_block = 1; begin_count += 1; next }
+    $0 == end { in_block = 0; end_count += 1; next }
+    in_block && $0 !~ /^[[:space:]]*#/ && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
+    END {
+      if (current && begin_count == 1 && end_count == 1) {
+        exit 0
+      }
+      if (begin_count != end_count) {
+        exit 3
+      }
+      if (begin_count > 0 && end_count > 0) {
+        exit 2
+      }
+      exit 1
+    }
+  ' "$file"
+}
+
+replace_marked_block() {
+  local file="$1"
+  if [[ -L "$file" ]]; then
+    return 73
+  fi
+  local parent_dir base_name tmp_file mode
+  parent_dir="$(dirname "$file")"
+  base_name="$(basename "$file")"
+  mode="$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file")" || return $?
+  tmp_file="$(umask 077; mktemp "$parent_dir/.${base_name}.second-codex.XXXXXX")" || return $?
+  if ! awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" -v line="$LINE" '
+    $0 == begin {
+      if (!replaced) {
+        print begin
+        print line
+        print end
+        replaced = 1
+      }
+      block_depth += 1
+      next
+    }
+    block_depth && $0 == end { block_depth -= 1; next }
+    block_depth { next }
+    { print }
+    END { if (!replaced) exit 1 }
+  ' "$file" > "$tmp_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+  if ! chmod "$mode" "$tmp_file"; then
+    rm -f "$tmp_file"
+    return 73
+  fi
+  if ! mv "$tmp_file" "$file"; then
+    rm -f "$tmp_file"
+    return 73
+  fi
+}
 
 ensure_source_line() {
   local file="$1"
-  if [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
+  local block_status=1
+  if [ -f "$file" ]; then
+    set +e
+    marked_block_status "$file"
+    block_status=$?
+    set -e
+  fi
+  if [ "$block_status" -eq 0 ]; then
+    echo "second-codex shell helper already sourced in marked block in $file"
+  elif [ "$block_status" -eq 3 ]; then
+    echo "Refusing to edit malformed second-codex shell helper block in $file" >&2
+    echo "Fix or remove the incomplete marked block, then rerun install." >&2
+    return 73
+  elif [ "$block_status" -ne 2 ] && [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
     echo "second-codex shell helper already sourced in $file"
+  elif [ -L "$file" ]; then
+    echo "Refusing to edit symlink-managed shell config: $file -> $(readlink "$file")" >&2
+    echo "Add this block to the real config file yourself:" >&2
+    printf '%s\n%s\n%s\n' "$MARKER_BEGIN" "$LINE" "$MARKER_END" >&2
+    return 73
+  elif [ "$block_status" -eq 2 ]; then
+    replace_marked_block "$file" || return $?
+    echo "Updated marked shell helper source block in $file"
   else
-    printf '\n%s\n' "$LINE" >> "$file"
-    echo "Added shell helper source line to $file"
+    local parent_dir
+    parent_dir="$(dirname "$file")"
+    if [ ! -d "$parent_dir" ]; then
+      echo "Refusing to edit shell config because its parent directory does not exist: $parent_dir" >&2
+      return 73
+    fi
+    printf '\n%s\n%s\n%s\n' "$MARKER_BEGIN" "$LINE" "$MARKER_END" >> "$file"
+    echo "Added marked shell helper source block to $file"
   fi
 }
 
@@ -55,5 +263,7 @@ ZSHRC="${ZSHRC:-$HOME/.zshrc}"
 ensure_source_line "$ZSHRC"
 
 echo "Installed second-codex to $INSTALL_ROOT"
+echo "Installed PATH entrypoint to $PATH_DIR/second-codex"
 echo "New zsh sessions can now use second-codex from any directory."
+echo "For non-interactive shells, ensure $PATH_DIR is on PATH."
 echo "For this already-open shell, run: source $INSTALL_ROOT/second-codex-shell.zsh"

@@ -5,9 +5,11 @@ ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 A_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 B_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
 BIN_DIR="${SECOND_CODEX_SHIM_DIR:-${TMPDIR:-/tmp}/second-codex-shim-$(id -u)}"
+PATH_ENTRY_DIR="${SECOND_CODEX_PATH_DIR:-$HOME/.local/bin}"
 while [[ "$A_HOME" == */ && "$A_HOME" != "/" ]]; do A_HOME="${A_HOME%/}"; done
 while [[ "$B_HOME" == */ && "$B_HOME" != "/" ]]; do B_HOME="${B_HOME%/}"; done
 while [[ "$BIN_DIR" == */ && "$BIN_DIR" != "/" ]]; do BIN_DIR="${BIN_DIR%/}"; done
+while [[ "$PATH_ENTRY_DIR" == */ && "$PATH_ENTRY_DIR" != "/" ]]; do PATH_ENTRY_DIR="${PATH_ENTRY_DIR%/}"; done
 WRAPPER_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 REAL_CODEX="${SECOND_CODEX_SWITCH_REAL_CODEX:-$(command -v codex || true)}"
 
@@ -19,6 +21,86 @@ block_reason() {
 second-codex refused this account/auth command.
 Run account/auth changes explicitly from the intended Codex account.
 EOF
+}
+
+shell_quote() {
+  local value="${1//\'/\'\\\'\'}"
+  printf "'%s'" "$value"
+}
+
+canonical_path_for_compare() {
+  local path="$1"
+  local parent base physical_parent
+  if [[ -z "$path" ]]; then
+    printf '\n'
+    return 0
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$path" 2>/dev/null && return 0
+  fi
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f "$path" 2>/dev/null && return 0
+  fi
+  parent="$(dirname "$path")"
+  base="$(basename "$path")"
+  physical_parent="$(cd "$parent" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' "$path"
+    return 0
+  }
+  printf '%s/%s\n' "$physical_parent" "$base"
+}
+
+install_source_root() {
+  local source_file="$ROOT/source-root"
+  local source_root
+  [[ -f "$source_file" ]] || return 1
+  IFS= read -r source_root < "$source_file" || return 1
+  [[ -n "$source_root" ]] || return 1
+  printf '%s\n' "$source_root"
+}
+
+source_wrapper_path() {
+  local source_root
+  source_root="$(install_source_root)" || return 1
+  [[ -f "$source_root/second-codex" ]] || return 1
+  printf '%s\n' "$source_root/second-codex"
+}
+
+source_wrapper_version() {
+  local source_wrapper
+  source_wrapper="$(source_wrapper_path)" || return 1
+  cksum "$source_wrapper" | awk '{ print $1 ":" $2 }'
+}
+
+warn_if_installed_wrapper_stale() {
+  [[ "${1:-}" != "update" && "${1:-}" != "doctor" ]] || return 0
+  [[ -t 2 || "${SECOND_CODEX_TEST_FORCE_STALE_WARNING:-0}" == "1" ]] || return 0
+  local source_wrapper source_version warn_file last_warned
+  source_wrapper="$(source_wrapper_path)" || return 0
+  cmp -s "$source_wrapper" "$WRAPPER_PATH" && return 0
+  source_version="$(source_wrapper_version)" || return 0
+  warn_file="$ROOT/.last-stale-warning"
+  if [[ -f "$warn_file" ]]; then
+    IFS= read -r last_warned < "$warn_file" || last_warned=""
+    [[ "$last_warned" == "$source_version" ]] && return 0
+  fi
+  echo "second-codex: installed wrapper is stale. Run \`second-codex update\`." >&2
+  local warn_parent warn_base warn_tmp
+  warn_parent="$(dirname "$warn_file")"
+  warn_base="$(basename "$warn_file")"
+  warn_tmp="$(umask 077; mktemp "$warn_parent/.${warn_base}.second-codex.XXXXXX")" || return 0
+  if ! printf '%s\n' "$source_version" > "$warn_tmp" 2>/dev/null; then
+    rm -f "$warn_tmp"
+    return 0
+  fi
+  if ! chmod 600 "$warn_tmp" 2>/dev/null; then
+    rm -f "$warn_tmp"
+    return 0
+  fi
+  if ! mv "$warn_tmp" "$warn_file" 2>/dev/null; then
+    rm -f "$warn_tmp"
+    return 0
+  fi
 }
 
 option_takes_value() {
@@ -154,7 +236,7 @@ fail_on_unknown_entries() {
   {
     echo "second-codex refused to sync because $label CODEX_HOME has unknown top-level entries:"
     printf '%s\n' "$unknown" | sed 's/^/  - /'
-    echo "Classify these in ownership-manifest.txt before syncing."
+    echo "Classify these in the active ownership manifest before syncing, or set SECOND_CODEX_MANIFEST to a custom manifest path."
   } >&2
   return 65
 }
@@ -1553,12 +1635,132 @@ doctor_command_is_blocked() {
   grep -q "refused this account/auth command" "$output_file"
 }
 
+install_update() {
+  local source_root
+  source_root="$(install_source_root)" || {
+    echo "second-codex cannot update because $ROOT/source-root is missing or empty" >&2
+    return 66
+  }
+  if [[ ! -x "$source_root/install.sh" ]]; then
+    echo "second-codex cannot update because the recorded source has no executable install.sh: $source_root" >&2
+    return 66
+  fi
+  SECOND_CODEX_SWITCH_ROOT="$ROOT" \
+    CODEX_A_HOME="$A_HOME" \
+    SECOND_CODEX_HOME="$B_HOME" \
+    SECOND_CODEX_SHIM_DIR="$BIN_DIR" \
+    SECOND_CODEX_PATH_DIR="$PATH_ENTRY_DIR" \
+    ZSHRC="${ZSHRC:-$HOME/.zshrc}" \
+    "$source_root/install.sh" || return $?
+  rm -f "$ROOT/.last-stale-warning"
+  echo "Updated second-codex install from $source_root"
+}
+
+doctor_install_freshness() {
+  local source_wrapper
+  source_wrapper="$(source_wrapper_path)" || {
+    echo "FAIL installed wrapper source is not recorded"
+    return 1
+  }
+  if [[ ! -f "$ROOT/second-codex" ]]; then
+    echo "FAIL installed wrapper is missing; run second-codex update"
+    return 1
+  fi
+  if cmp -s "$source_wrapper" "$ROOT/second-codex"; then
+    echo "PASS installed wrapper is current"
+    return 0
+  fi
+  echo "FAIL installed wrapper is stale; run second-codex update"
+  return 1
+}
+
+doctor_shell_helper_block() {
+  local zshrc="${ZSHRC:-$HOME/.zshrc}"
+  local default_home_ok=0
+  if [[ "$ROOT" == "$HOME/.codex-account-switch" ]]; then
+    default_home_ok=1
+  fi
+  if [[ -f "$zshrc" ]] && awk -v begin="# >>> second-codex shell helper >>>" \
+    -v end="# <<< second-codex shell helper <<<" \
+    -v line="source $(shell_quote "$ROOT/second-codex-shell.zsh")" \
+    -v legacy="source $ROOT/second-codex-shell.zsh" \
+    -v default_home_line='$HOME/.codex-account-switch/second-codex-shell.zsh' \
+    -v default_home_ok="$default_home_ok" '
+    $0 == begin { in_block = 1; begin_count += 1; next }
+    $0 == end { in_block = 0; end_count += 1; next }
+    in_block && $0 !~ /^[[:space:]]*#/ && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
+    END { exit(current && begin_count == 1 && end_count == 1 ? 0 : 1) }
+  ' "$zshrc"; then
+    echo "PASS shell helper block points to install root"
+    return 0
+  fi
+  if [[ -f "$zshrc" ]] \
+    && ! grep -Fxq "# >>> second-codex shell helper >>>" "$zshrc" \
+    && ! grep -Fxq "# <<< second-codex shell helper <<<" "$zshrc" \
+    && {
+    grep -Fxq "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "$zshrc" \
+      || grep -Fxq "source $ROOT/second-codex-shell.zsh" "$zshrc"
+  }; then
+    echo "PASS shell helper source points to install root"
+    return 0
+  fi
+  if [[ -L "$zshrc" ]]; then
+    echo "FAIL shell helper block missing or stale in symlink-managed config"
+    echo "Add this block to the real config file yourself:" >&2
+    printf '%s\n%s\n%s\n' "# >>> second-codex shell helper >>>" "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "# <<< second-codex shell helper <<<" >&2
+  else
+    echo "FAIL shell helper block missing or stale; run second-codex update"
+  fi
+  return 1
+}
+
+doctor_path_entrypoint() {
+  local entrypoint="$PATH_ENTRY_DIR/second-codex"
+  local expected_line resolved resolved_path entrypoint_path
+  expected_line="CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second CODEX_HOME=$(shell_quote "$B_HOME") SECOND_CODEX_HOME=$(shell_quote "$B_HOME") SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\""
+  if [[ -f "$entrypoint" && ! -x "$entrypoint" && ! -L "$entrypoint" ]]; then
+    echo "FAIL PATH entrypoint is not executable; run second-codex update"
+    return 1
+  fi
+  if [[ -L "$entrypoint" ]]; then
+    echo "FAIL PATH entrypoint is a symlink; remove it, then run second-codex update"
+    return 1
+  fi
+  if [[ -x "$entrypoint" ]] \
+    && awk -v expected="$expected_line" '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line == expected) {
+          found = 1
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' "$entrypoint"; then
+    echo "PASS PATH entrypoint points to install root"
+  else
+    echo "FAIL PATH entrypoint missing or stale; run second-codex update"
+    return 1
+  fi
+  resolved="$(command -v second-codex || true)"
+  resolved_path="$(canonical_path_for_compare "$resolved")"
+  entrypoint_path="$(canonical_path_for_compare "$entrypoint")"
+  if [[ "$resolved_path" == "$entrypoint_path" ]]; then
+    echo "PASS PATH resolves second-codex entrypoint"
+    return 0
+  fi
+  echo "FAIL PATH does not resolve second-codex entrypoint; add $PATH_ENTRY_DIR to PATH"
+  return 1
+}
+
 doctor() {
   local failed=0
   echo "second-codex doctor"
   echo "primary_home=$A_HOME"
   echo "second_home=$B_HOME"
   echo "shim_dir=$BIN_DIR"
+  echo "path_entrypoint=$PATH_ENTRY_DIR/second-codex"
   echo "primary_auth=$(auth_status "$A_HOME")"
   echo "second_auth=$(auth_status "$B_HOME")"
 
@@ -1603,13 +1805,16 @@ doctor() {
     failed=1
   fi
 
+  doctor_install_freshness || failed=1
+  doctor_shell_helper_block || failed=1
+  doctor_path_entrypoint || failed=1
+
   local block_out=""
   block_out="$(mktemp "${TMPDIR:-/tmp}/second-codex-doctor.XXXXXX")"
   trap 'rm -f "${block_out:-}"' RETURN
   local blocked_ok=1
   doctor_command_is_blocked "$block_out" login || blocked_ok=0
   doctor_command_is_blocked "$block_out" logout || blocked_ok=0
-  doctor_command_is_blocked "$block_out" update || blocked_ok=0
   doctor_command_is_blocked "$block_out" plugin login || blocked_ok=0
   doctor_command_is_blocked "$block_out" mcp oauth || blocked_ok=0
   doctor_command_is_blocked "$block_out" mcp -- oauth || blocked_ok=0
@@ -1631,9 +1836,15 @@ doctor() {
 }
 
 main() {
+  warn_if_installed_wrapper_stale "${1:-}"
   case "${1:-}" in
     account)
       account_status
+      return
+      ;;
+    update)
+      shift
+      install_update "$@"
       return
       ;;
     usage)
