@@ -155,6 +155,31 @@ fi
 grep -q "refused symlinked shim directory" "$SANDBOX/shim-parent-link.out"
 test ! -e "$SANDBOX/shim-target/shim/codex"
 
+mkdir -p "$SANDBOX/artifact-primary/generated_images/session-a" "$SANDBOX/artifact-second/generated_images/session-b"
+cat > "$SANDBOX/artifact-primary/config.toml" <<'TOML'
+model = "gpt-5.5"
+TOML
+cat > "$SANDBOX/artifact-second/config.toml" <<'TOML'
+model = "gpt-5.5"
+TOML
+printf 'primary image\n' > "$SANDBOX/artifact-primary/generated_images/session-a/primary-only.png"
+printf 'second image\n' > "$SANDBOX/artifact-second/generated_images/session-b/second-only.png"
+mkdir -p "$SANDBOX/artifact-primary/memories" "$SANDBOX/artifact-primary/memories_extensions"
+ln -s "$SANDBOX/artifact-primary/memories" "$SANDBOX/artifact-second/memories"
+ln -s "$SANDBOX/artifact-primary/memories_extensions" "$SANDBOX/artifact-second/memories_extensions"
+if ! run_wrapper "$SANDBOX/artifact-primary" "$SANDBOX/artifact-second" >"$SANDBOX/artifacts.out" 2>&1; then
+  echo "FAIL generated artifact entries blocked sync" >&2
+  cat "$SANDBOX/artifacts.out" >&2
+  exit 1
+fi
+if grep -q "generated_images" "$SANDBOX/artifacts.out"; then
+  echo "FAIL generated_images was treated as an unknown CODEX_HOME entry" >&2
+  cat "$SANDBOX/artifacts.out" >&2
+  exit 1
+fi
+test -f "$SANDBOX/artifact-second/generated_images/session-b/second-only.png"
+test ! -e "$SANDBOX/artifact-second/generated_images/session-a/primary-only.png"
+
 mkdir -p "$SANDBOX/unknown-primary" "$SANDBOX/unknown-second"
 cat > "$SANDBOX/unknown-primary/config.toml" <<'TOML'
 model = "gpt-5.5"
