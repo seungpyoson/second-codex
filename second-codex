@@ -28,6 +28,28 @@ shell_quote() {
   printf "'%s'" "$value"
 }
 
+canonical_path_for_compare() {
+  local path="$1"
+  local parent base physical_parent
+  if [[ -z "$path" ]]; then
+    printf '\n'
+    return 0
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$path" 2>/dev/null && return 0
+  fi
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f "$path" 2>/dev/null && return 0
+  fi
+  parent="$(dirname "$path")"
+  base="$(basename "$path")"
+  physical_parent="$(cd "$parent" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' "$path"
+    return 0
+  }
+  printf '%s/%s\n' "$physical_parent" "$base"
+}
+
 install_source_root() {
   local source_file="$ROOT/source-root"
   local source_root
@@ -1655,8 +1677,8 @@ doctor_shell_helper_block() {
   fi
   if [[ -L "$zshrc" ]]; then
     echo "FAIL shell helper block missing or stale in symlink-managed config"
-    echo "Add this block to the real config file yourself:"
-    printf '%s\n%s\n%s\n' "# >>> second-codex shell helper >>>" "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "# <<< second-codex shell helper <<<"
+    echo "Add this block to the real config file yourself:" >&2
+    printf '%s\n%s\n%s\n' "# >>> second-codex shell helper >>>" "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "# <<< second-codex shell helper <<<" >&2
   else
     echo "FAIL shell helper block missing or stale; run second-codex update"
   fi
@@ -1665,7 +1687,7 @@ doctor_shell_helper_block() {
 
 doctor_path_entrypoint() {
   local entrypoint="$PATH_ENTRY_DIR/second-codex"
-  local resolved
+  local resolved resolved_path entrypoint_path
   if [[ -x "$entrypoint" && ! -L "$entrypoint" ]] \
     && grep -Fxq "SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\"" "$entrypoint"; then
     echo "PASS PATH entrypoint points to install root"
@@ -1674,7 +1696,9 @@ doctor_path_entrypoint() {
     return 1
   fi
   resolved="$(command -v second-codex || true)"
-  if [[ "$resolved" == "$entrypoint" ]]; then
+  resolved_path="$(canonical_path_for_compare "$resolved")"
+  entrypoint_path="$(canonical_path_for_compare "$entrypoint")"
+  if [[ "$resolved_path" == "$entrypoint_path" ]]; then
     echo "PASS PATH resolves second-codex entrypoint"
     return 0
   fi

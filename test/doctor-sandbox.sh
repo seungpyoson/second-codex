@@ -62,12 +62,17 @@ SECOND_CODEX_HOME="$SANDBOX/doctor-managed-second" \
 SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-managed-shim" \
 ZSHRC="$MANAGED_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$MANAGED_HOME/.local/bin" \
-"$REPO_ROOT/second-codex" doctor >"$SANDBOX/doctor-managed.out" 2>&1 || true
+"$REPO_ROOT/second-codex" doctor >"$SANDBOX/doctor-managed.out" 2>"$SANDBOX/doctor-managed.err" || true
 grep -q "FAIL shell helper block missing or stale in symlink-managed config" "$SANDBOX/doctor-managed.out"
-grep -q "Add this block to the real config file yourself" "$SANDBOX/doctor-managed.out"
-grep -q "# >>> second-codex shell helper >>>" "$SANDBOX/doctor-managed.out"
-grep -q "source '$MANAGED_HOME/.codex-account-switch/second-codex-shell.zsh'" "$SANDBOX/doctor-managed.out"
-grep -q "# <<< second-codex shell helper <<<" "$SANDBOX/doctor-managed.out"
+grep -q "Add this block to the real config file yourself" "$SANDBOX/doctor-managed.err"
+grep -q "# >>> second-codex shell helper >>>" "$SANDBOX/doctor-managed.err"
+grep -q "source '$MANAGED_HOME/.codex-account-switch/second-codex-shell.zsh'" "$SANDBOX/doctor-managed.err"
+grep -q "# <<< second-codex shell helper <<<" "$SANDBOX/doctor-managed.err"
+if grep -q "Add this block to the real config file yourself" "$SANDBOX/doctor-managed.out"; then
+  echo "FAIL doctor wrote symlink-managed shell helper remedy to stdout"
+  cat "$SANDBOX/doctor-managed.out"
+  exit 1
+fi
 
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
@@ -77,6 +82,7 @@ ZSHRC="$SANDBOX/home/.zshrc" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
 "$REPO_ROOT/install.sh" >"$SANDBOX/install.out"
 
+HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
@@ -144,6 +150,23 @@ grep -q "PASS PATH resolves second-codex entrypoint" "$SANDBOX/doctor.out"
 grep -q "PASS account/auth command blocked" "$SANDBOX/doctor.out"
 if grep -q "^FAIL " "$SANDBOX/doctor.out"; then
   cat "$SANDBOX/doctor.out"
+  exit 1
+fi
+
+ln -s "$SANDBOX/home/.local/bin" "$SANDBOX/path-link"
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
+PATH="$SANDBOX/path-link:$PATH" \
+SECOND_CODEX_DOCTOR_SHOW_EMAIL=1 \
+"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-symlink-path.out"
+grep -q "PASS PATH resolves second-codex entrypoint" "$SANDBOX/doctor-symlink-path.out"
+if grep -q "FAIL PATH does not resolve second-codex entrypoint" "$SANDBOX/doctor-symlink-path.out"; then
+  cat "$SANDBOX/doctor-symlink-path.out"
   exit 1
 fi
 
