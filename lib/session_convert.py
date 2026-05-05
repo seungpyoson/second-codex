@@ -715,12 +715,25 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 "user",
                 {"role": "user", "content": content_blocks},
             ))
-        elif ptype == "message" and payload.get("role") in _CODEX_RESPONSE_MESSAGE_ROLE_DOCUMENTED_DROP:
+        elif (
+            ptype == "message"
+            and isinstance(payload.get("role"), str)
+            and payload.get("role") in _CODEX_RESPONSE_MESSAGE_ROLE_DOCUMENTED_DROP
+        ):
             continue
         elif ptype == "message":
             role = payload.get("role")
             if isinstance(role, str):
                 _warn_unknown("response_item.message.role", role, warned_unknowns)
+            elif role is not None:
+                # Surface malformed/future role shapes without echoing their
+                # value, since role-bearing records can contain runtime
+                # context that should not leak to stderr.
+                _warn_unknown(
+                    "response_item.message.role",
+                    f"<non-string:{type(role).__name__}>",
+                    warned_unknowns,
+                )
         elif ptype == "function_call":
             call_id = payload.get("call_id", "")
             tool_name_codex = payload.get("name", "")

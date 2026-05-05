@@ -873,6 +873,7 @@ cat > "$TV_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:15.000Z","type":"event_msg","payload":{"type":"user_message","message":"MULTI-BLOCK-USER-MARKER-APRICOT","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-05-04T00:00:16.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,CCCC"}]}}
 {"timestamp":"2026-05-04T00:00:17.000Z","type":"response_item","payload":{"type":"message","role":"orchestrator","content":[{"type":"input_text","text":"UNKNOWN-ROLE-MARKER-DO-NOT-PORT"}]}}
+{"timestamp":"2026-05-04T00:00:18.000Z","type":"response_item","payload":{"type":"message","role":{"name":"future-role"},"content":[{"type":"input_text","text":"NONSTRING-ROLE-MARKER-DO-NOT-PORT"}]}}
 EOF
 
 OUT="$SANDBOX/response-item-message.stdout"
@@ -897,6 +898,7 @@ assert "STRING-USER-MARKER-FIG" in joined, f"string-form response_item user mess
 assert "STRING-ASSISTANT-MARKER-KIWI" in joined, f"string-form response_item assistant message was lost: {texts}"
 assert "DEV-RUNTIME-CONTEXT-DO-NOT-PORT" not in joined, f"developer runtime context leaked into target session: {texts}"
 assert "UNKNOWN-ROLE-MARKER-DO-NOT-PORT" not in joined, f"unknown role leaked into target session: {texts}"
+assert "NONSTRING-ROLE-MARKER-DO-NOT-PORT" not in joined, f"non-string role leaked into target session: {texts}"
 print("response_item.message role dispatch PASSED")
 EOF
 
@@ -912,6 +914,11 @@ if grep -q "response_item.message.role type 'developer'" "$SANDBOX/response-item
 fi
 grep -q "response_item.message.role type 'orchestrator'" "$SANDBOX/response-item-message.stderr" || {
   echo "FAIL: unknown response_item.message role did not warn"
+  cat "$SANDBOX/response-item-message.stderr"
+  exit 1
+}
+grep -q "response_item.message.role type '<non-string:dict>'" "$SANDBOX/response-item-message.stderr" || {
+  echo "FAIL: non-string response_item.message role did not warn"
   cat "$SANDBOX/response-item-message.stderr"
   exit 1
 }
