@@ -1706,9 +1706,20 @@ doctor_shell_helper_block() {
 
 doctor_path_entrypoint() {
   local entrypoint="$PATH_ENTRY_DIR/second-codex"
-  local resolved resolved_path entrypoint_path
+  local expected_line resolved resolved_path entrypoint_path
+  expected_line="SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\""
   if [[ -x "$entrypoint" && ! -L "$entrypoint" ]] \
-    && grep -Fxq "SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\"" "$entrypoint"; then
+    && awk -v expected="$expected_line" '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line == expected) {
+          found = 1
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' "$entrypoint"; then
     echo "PASS PATH entrypoint points to install root"
   else
     echo "FAIL PATH entrypoint missing or stale; run second-codex update"

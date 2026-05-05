@@ -207,6 +207,20 @@ if grep -q "^FAIL " "$SANDBOX/doctor.out"; then
   exit 1
 fi
 
+awk '{ if ($0 ~ /^SECOND_CODEX_SWITCH_ROOT=/) { print "  " $0 "  " } else { print } }' \
+  "$SANDBOX/home/.local/bin/second-codex" > "$SANDBOX/path-entrypoint-spaced"
+mv "$SANDBOX/path-entrypoint-spaced" "$SANDBOX/home/.local/bin/second-codex"
+chmod 700 "$SANDBOX/home/.local/bin/second-codex"
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/home-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
+PATH="$SANDBOX/home/.local/bin:$PATH" \
+"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-entrypoint-whitespace.out"
+grep -q "PASS PATH entrypoint points to install root" "$SANDBOX/doctor-entrypoint-whitespace.out"
+
 ln -s "$SANDBOX/home/.local/bin" "$SANDBOX/path-link"
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \

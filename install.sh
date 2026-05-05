@@ -165,12 +165,14 @@ replace_marked_block() {
   mode="$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file")" || return $?
   tmp_file="$(umask 077; mktemp "$parent_dir/.${base_name}.second-codex.XXXXXX")" || return $?
   if ! awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" -v line="$LINE" '
-    $0 == begin && !replaced {
-      print begin
-      print line
-      print end
+    $0 == begin {
+      if (!replaced) {
+        print begin
+        print line
+        print end
+        replaced = 1
+      }
       in_block = 1
-      replaced = 1
       next
     }
     in_block && $0 == end { in_block = 0; next }
