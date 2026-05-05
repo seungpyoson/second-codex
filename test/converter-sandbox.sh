@@ -877,6 +877,8 @@ cat > "$TV_PATH" <<EOF
 {"timestamp":"2026-05-04T00:00:19.000Z","type":"response_item","payload":{"type":"message","role":null,"content":[{"type":"input_text","text":"NULL-ROLE-MARKER-DO-NOT-PORT"}]}}
 {"timestamp":"2026-05-04T00:00:20.000Z","type":"response_item","payload":{"type":"message","role":"user","content":{"type":"input_text","text":"MALFORMED-USER-CONTENT-DO-NOT-PORT"}}}
 {"timestamp":"2026-05-04T00:00:21.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":{"type":"output_text","text":"MALFORMED-ASSISTANT-CONTENT-DO-NOT-PORT"}}}
+{"timestamp":"2026-05-04T00:00:22.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":{"nested":"MALFORMED-USER-TEXT-DO-NOT-PORT"}}]}}
+{"timestamp":"2026-05-04T00:00:23.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":{"nested":"MALFORMED-ASSISTANT-TEXT-DO-NOT-PORT"}}]}}
 EOF
 
 OUT="$SANDBOX/response-item-message.stdout"
@@ -905,6 +907,8 @@ assert "NONSTRING-ROLE-MARKER-DO-NOT-PORT" not in joined, f"non-string role leak
 assert "NULL-ROLE-MARKER-DO-NOT-PORT" not in joined, f"null role leaked into target session: {texts}"
 assert "MALFORMED-USER-CONTENT-DO-NOT-PORT" not in joined, f"malformed user content leaked into target session: {texts}"
 assert "MALFORMED-ASSISTANT-CONTENT-DO-NOT-PORT" not in joined, f"malformed assistant content leaked into target session: {texts}"
+assert "MALFORMED-USER-TEXT-DO-NOT-PORT" not in joined, f"malformed user block text leaked into target session: {texts}"
+assert "MALFORMED-ASSISTANT-TEXT-DO-NOT-PORT" not in joined, f"malformed assistant block text leaked into target session: {texts}"
 print("response_item.message role dispatch PASSED")
 EOF
 

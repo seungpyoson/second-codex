@@ -591,11 +591,15 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
         # runtime data into the receiver transcript.
         return []
 
+    def codex_block_text(block_obj: dict[str, Any]) -> str:
+        text = block_obj.get("text")
+        return text if isinstance(text, str) else ""
+
     def codex_user_text_echo(payload_obj: dict[str, Any]) -> str:
         parts = []
         for block_obj in codex_message_blocks(payload_obj, "input_text"):
             if isinstance(block_obj, dict) and block_obj.get("type") == "input_text":
-                text = block_obj.get("text") or ""
+                text = codex_block_text(block_obj)
                 if text:
                     parts.append(text)
         return "".join(parts)
@@ -680,7 +684,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 if not isinstance(block, dict):
                     continue
                 btype = block.get("type")
-                text = block.get("text") or ""
+                text = codex_block_text(block)
                 # Historical Codex message payloads have appeared with
                 # input_text under assistant roles; keep accepting it as
                 # compatibility text while user-role messages own input_text
@@ -708,7 +712,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 if not isinstance(block, dict):
                     continue
                 btype = block.get("type")
-                text = block.get("text") or ""
+                text = codex_block_text(block)
                 if btype == "input_text" and text:
                     content_blocks.append({"type": "text", "text": text})
                 elif btype == "input_image":
