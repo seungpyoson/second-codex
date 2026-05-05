@@ -85,7 +85,22 @@ warn_if_installed_wrapper_stale() {
     [[ "$last_warned" == "$source_version" ]] && return 0
   fi
   echo "second-codex: installed wrapper is stale. Run \`second-codex update\`." >&2
-  printf '%s\n' "$source_version" > "$warn_file" 2>/dev/null || true
+  local warn_parent warn_base warn_tmp
+  warn_parent="$(dirname "$warn_file")"
+  warn_base="$(basename "$warn_file")"
+  warn_tmp="$(umask 077; mktemp "$warn_parent/.${warn_base}.second-codex.XXXXXX")" || return 0
+  if ! printf '%s\n' "$source_version" > "$warn_tmp" 2>/dev/null; then
+    rm -f "$warn_tmp"
+    return 0
+  fi
+  if ! chmod 600 "$warn_tmp" 2>/dev/null; then
+    rm -f "$warn_tmp"
+    return 0
+  fi
+  if ! mv "$warn_tmp" "$warn_file" 2>/dev/null; then
+    rm -f "$warn_tmp"
+    return 0
+  fi
 }
 
 option_takes_value() {
@@ -1647,7 +1662,11 @@ doctor_install_freshness() {
     echo "FAIL installed wrapper source is not recorded"
     return 1
   }
-  if [[ -f "$ROOT/second-codex" ]] && cmp -s "$source_wrapper" "$ROOT/second-codex"; then
+  if [[ ! -f "$ROOT/second-codex" ]]; then
+    echo "FAIL installed wrapper is missing; run second-codex update"
+    return 1
+  fi
+  if cmp -s "$source_wrapper" "$ROOT/second-codex"; then
     echo "PASS installed wrapper is current"
     return 0
   fi

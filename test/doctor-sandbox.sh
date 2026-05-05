@@ -103,6 +103,31 @@ if HOME="$MALFORMED_HOME" \
 fi
 grep -q "FAIL shell helper block missing or stale" "$SANDBOX/doctor-malformed.out"
 
+MISSING_WRAPPER_HOME="$SANDBOX/doctor-missing-wrapper-home"
+MISSING_WRAPPER_SECOND="$SANDBOX/doctor-missing-wrapper-second"
+mkdir -p "$MISSING_WRAPPER_HOME" "$MISSING_WRAPPER_SECOND"
+HOME="$MISSING_WRAPPER_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$MISSING_WRAPPER_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$MISSING_WRAPPER_SECOND" \
+ZSHRC="$MISSING_WRAPPER_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$MISSING_WRAPPER_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/missing-wrapper-install.out"
+rm "$MISSING_WRAPPER_HOME/.codex-account-switch/second-codex"
+if SECOND_CODEX_SWITCH_ROOT="$MISSING_WRAPPER_HOME/.codex-account-switch" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$MISSING_WRAPPER_SECOND" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-missing-wrapper-shim" \
+  ZSHRC="$MISSING_WRAPPER_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$MISSING_WRAPPER_HOME/.local/bin" \
+  PATH="$MISSING_WRAPPER_HOME/.local/bin:$PATH" \
+  "$REPO_ROOT/second-codex" doctor >"$SANDBOX/doctor-missing-wrapper.out" 2>&1; then
+  echo "FAIL doctor accepted a missing installed wrapper"
+  cat "$SANDBOX/doctor-missing-wrapper.out"
+  exit 1
+fi
+grep -q "FAIL installed wrapper is missing; run second-codex update" "$SANDBOX/doctor-missing-wrapper.out"
+
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \

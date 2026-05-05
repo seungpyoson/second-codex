@@ -74,6 +74,11 @@ HOME="$SANDBOX/home" \
 SECOND_CODEX_TEST_FORCE_STALE_WARNING=1 \
   "$SANDBOX/home/.local/bin/second-codex" account >"$SANDBOX/stale-first.out" 2>"$SANDBOX/stale-first.err"
 grep -Fq "second-codex: installed wrapper is stale. Run \`second-codex update\`." "$SANDBOX/stale-first.err"
+warn_mode="$(stat -f '%Lp' "$SANDBOX/install \"root/.last-stale-warning" 2>/dev/null || stat -c '%a' "$SANDBOX/install \"root/.last-stale-warning")"
+if [[ "$warn_mode" != "600" ]]; then
+  echo "FAIL stale warning marker was not written with private permissions: $warn_mode"
+  exit 1
+fi
 HOME="$SANDBOX/home" \
 SECOND_CODEX_TEST_FORCE_STALE_WARNING=1 \
   "$SANDBOX/home/.local/bin/second-codex" account >"$SANDBOX/stale-second.out" 2>"$SANDBOX/stale-second.err"
