@@ -157,6 +157,25 @@ if grep -Fq "source '$PRESEEDED_HOME/.codex-account-switch/second-codex-shell.zs
   exit 1
 fi
 
+COMMENTED_HOME="$SANDBOX/commented-home"
+mkdir -p "$COMMENTED_HOME"
+cat > "$COMMENTED_HOME/.zshrc" <<'ZSHRC'
+# >>> second-codex shell helper >>>
+# [[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"
+# <<< second-codex shell helper <<<
+ZSHRC
+HOME="$COMMENTED_HOME" \
+CODEX_A_HOME="$COMMENTED_HOME/.codex" \
+SECOND_CODEX_HOME="$COMMENTED_HOME/.codex-second" \
+ZSHRC="$COMMENTED_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/commented-install.out"
+if grep -Fxq '# [[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"' "$COMMENTED_HOME/.zshrc"; then
+  echo "FAIL installer accepted commented-out helper source line as active"
+  cat "$COMMENTED_HOME/.zshrc"
+  exit 1
+fi
+grep -Fxq "source '$COMMENTED_HOME/.codex-account-switch/second-codex-shell.zsh'" "$COMMENTED_HOME/.zshrc"
+
 LEGACY_HOME="$SANDBOX/legacy-home"
 mkdir -p "$LEGACY_HOME"
 printf "source '%s'\n" "$LEGACY_HOME/.codex-account-switch/second-codex-shell.zsh" > "$LEGACY_HOME/.zshrc"

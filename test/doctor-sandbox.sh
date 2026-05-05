@@ -44,6 +44,36 @@ PATH="$DEFAULT_BLOCK_HOME/.local/bin:$PATH" \
 "$DEFAULT_BLOCK_HOME/.local/bin/second-codex" doctor >"$SANDBOX/default-block-doctor.out"
 grep -q "PASS shell helper block points to install root" "$SANDBOX/default-block-doctor.out"
 
+COMMENTED_HOME="$SANDBOX/doctor-commented-home"
+COMMENTED_SECOND="$SANDBOX/doctor-commented-second"
+mkdir -p "$COMMENTED_HOME" "$COMMENTED_SECOND"
+HOME="$COMMENTED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$COMMENTED_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$COMMENTED_SECOND" \
+ZSHRC="$COMMENTED_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$COMMENTED_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/commented-install.out"
+cat > "$COMMENTED_HOME/.zshrc" <<'ZSHRC'
+# >>> second-codex shell helper >>>
+# [[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"
+# <<< second-codex shell helper <<<
+ZSHRC
+if HOME="$COMMENTED_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$COMMENTED_HOME/.codex-account-switch" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$COMMENTED_SECOND" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-commented-shim" \
+  ZSHRC="$COMMENTED_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$COMMENTED_HOME/.local/bin" \
+  PATH="$COMMENTED_HOME/.local/bin:$PATH" \
+  "$COMMENTED_HOME/.local/bin/second-codex" doctor >"$SANDBOX/doctor-commented.out" 2>&1; then
+  echo "FAIL doctor accepted commented-out shell helper source line"
+  cat "$SANDBOX/doctor-commented.out"
+  exit 1
+fi
+grep -q "FAIL shell helper block missing or stale" "$SANDBOX/doctor-commented.out"
+
 MANAGED_HOME="$SANDBOX/doctor-managed-home"
 MANAGED_REPO="$SANDBOX/doctor-managed-config"
 mkdir -p "$MANAGED_HOME" "$MANAGED_REPO"

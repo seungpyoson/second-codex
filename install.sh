@@ -141,7 +141,7 @@ marked_block_status() {
     -v default_home_line="$DEFAULT_HOME_LINE" -v default_home_ok="$default_home_ok" '
     $0 == begin { in_block = 1; begin_count += 1; next }
     $0 == end { in_block = 0; end_count += 1; next }
-    in_block && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
+    in_block && $0 !~ /^[[:space:]]*#/ && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
     END {
       if (current && begin_count == 1 && end_count == 1) {
         exit 0
