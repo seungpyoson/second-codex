@@ -18,6 +18,57 @@ mkdir -p "$SANDBOX/home-a/memories" "$SANDBOX/home-a/memories_extensions"
 ln -s "$SANDBOX/home-a/memories" "$SANDBOX/home-second/memories"
 ln -s "$SANDBOX/home-a/memories_extensions" "$SANDBOX/home-second/memories_extensions"
 
+DEFAULT_BLOCK_HOME="$SANDBOX/default-block-home"
+DEFAULT_BLOCK_SECOND="$SANDBOX/default-block-second"
+mkdir -p "$DEFAULT_BLOCK_HOME" "$DEFAULT_BLOCK_SECOND"
+cat > "$DEFAULT_BLOCK_HOME/.zshrc" <<'ZSHRC'
+# >>> second-codex shell helper >>>
+[[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"
+# <<< second-codex shell helper <<<
+ZSHRC
+HOME="$DEFAULT_BLOCK_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$DEFAULT_BLOCK_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$DEFAULT_BLOCK_SECOND" \
+ZSHRC="$DEFAULT_BLOCK_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$DEFAULT_BLOCK_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/default-block-install.out"
+HOME="$DEFAULT_BLOCK_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$DEFAULT_BLOCK_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$DEFAULT_BLOCK_SECOND" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/default-block-shim" \
+ZSHRC="$DEFAULT_BLOCK_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$DEFAULT_BLOCK_HOME/.local/bin" \
+PATH="$DEFAULT_BLOCK_HOME/.local/bin:$PATH" \
+"$DEFAULT_BLOCK_HOME/.local/bin/second-codex" doctor >"$SANDBOX/default-block-doctor.out"
+grep -q "PASS shell helper block points to install root" "$SANDBOX/default-block-doctor.out"
+
+MANAGED_HOME="$SANDBOX/doctor-managed-home"
+MANAGED_REPO="$SANDBOX/doctor-managed-config"
+mkdir -p "$MANAGED_HOME" "$MANAGED_REPO"
+printf '# managed config\n' > "$MANAGED_REPO/zshrc"
+ln -s "$MANAGED_REPO/zshrc" "$MANAGED_HOME/.zshrc"
+HOME="$MANAGED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$MANAGED_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/doctor-managed-second" \
+SECOND_CODEX_PATH_DIR="$MANAGED_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+HOME="$MANAGED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$MANAGED_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$SANDBOX/doctor-managed-second" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-managed-shim" \
+ZSHRC="$MANAGED_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$MANAGED_HOME/.local/bin" \
+"$REPO_ROOT/second-codex" doctor >"$SANDBOX/doctor-managed.out" 2>&1 || true
+grep -q "FAIL shell helper block missing or stale in symlink-managed config" "$SANDBOX/doctor-managed.out"
+grep -q "Add this block to the real config file yourself" "$SANDBOX/doctor-managed.out"
+grep -q "# >>> second-codex shell helper >>>" "$SANDBOX/doctor-managed.out"
+grep -q "source '$MANAGED_HOME/.codex-account-switch/second-codex-shell.zsh'" "$SANDBOX/doctor-managed.out"
+grep -q "# <<< second-codex shell helper <<<" "$SANDBOX/doctor-managed.out"
+
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \

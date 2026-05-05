@@ -1635,14 +1635,28 @@ doctor_install_freshness() {
 
 doctor_shell_helper_block() {
   local zshrc="${ZSHRC:-$HOME/.zshrc}"
-  if [[ -f "$zshrc" ]] && grep -Fxq "# >>> second-codex shell helper >>>" "$zshrc" \
-    && grep -Fxq "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "$zshrc" \
-    && grep -Fxq "# <<< second-codex shell helper <<<" "$zshrc"; then
+  local default_home_ok=0
+  if [[ "$ROOT" == "$HOME/.codex-account-switch" ]]; then
+    default_home_ok=1
+  fi
+  if [[ -f "$zshrc" ]] && awk -v begin="# >>> second-codex shell helper >>>" \
+    -v end="# <<< second-codex shell helper <<<" \
+    -v line="source $(shell_quote "$ROOT/second-codex-shell.zsh")" \
+    -v legacy="source $ROOT/second-codex-shell.zsh" \
+    -v default_home_line='$HOME/.codex-account-switch/second-codex-shell.zsh' \
+    -v default_home_ok="$default_home_ok" '
+    $0 == begin { in_block = 1; next }
+    $0 == end { in_block = 0; next }
+    in_block && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
+    END { exit(current ? 0 : 1) }
+  ' "$zshrc"; then
     echo "PASS shell helper block points to install root"
     return 0
   fi
   if [[ -L "$zshrc" ]]; then
-    echo "FAIL shell helper block missing or stale in symlink-managed config; add the printed install block manually"
+    echo "FAIL shell helper block missing or stale in symlink-managed config"
+    echo "Add this block to the real config file yourself:"
+    printf '%s\n%s\n%s\n' "# >>> second-codex shell helper >>>" "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "# <<< second-codex shell helper <<<"
   else
     echo "FAIL shell helper block missing or stale; run second-codex update"
   fi
