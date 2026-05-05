@@ -19,10 +19,74 @@ test -L "$SANDBOX/home/.codex-second/memories"
 test -L "$SANDBOX/home/.codex-second/memories_extensions"
 test "$(readlink "$SANDBOX/home/.codex-second/memories")" = "$SANDBOX/home/.codex/memories"
 test "$(readlink "$SANDBOX/home/.codex-second/memories_extensions")" = "$SANDBOX/home/.codex/memories_extensions"
+grep -Fxq "# >>> second-codex shell helper >>>" "$SANDBOX/home/.zshrc"
+grep -Fxq "# <<< second-codex shell helper <<<" "$SANDBOX/home/.zshrc"
+if [ "$(grep -c "second-codex-shell.zsh" "$SANDBOX/home/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer wrote duplicate helper source lines on fresh install"
+  cat "$SANDBOX/home/.zshrc"
+  exit 1
+fi
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
+CODEX_A_HOME="$SANDBOX/home/.codex" \
+SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+ZSHENV="$SANDBOX/home/.zshenv" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/install-rerun.out"
+if [ "$(grep -c "second-codex-shell.zsh" "$SANDBOX/home/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer appended duplicate helper source line on rerun"
+  cat "$SANDBOX/home/.zshrc"
+  exit 1
+fi
 if [[ -e "$SANDBOX/home/.zshenv" ]] && grep -Fq "second-codex-shell.zsh" "$SANDBOX/home/.zshenv"; then
   echo "FAIL installer sourced helper from .zshenv"
   exit 1
 fi
+
+PRESEEDED_HOME="$SANDBOX/preseed-home"
+mkdir -p "$PRESEEDED_HOME"
+cat > "$PRESEEDED_HOME/.zshrc" <<'ZSHRC'
+# >>> second-codex shell helper >>>
+[[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"
+# <<< second-codex shell helper <<<
+ZSHRC
+HOME="$PRESEEDED_HOME" \
+CODEX_A_HOME="$PRESEEDED_HOME/.codex" \
+SECOND_CODEX_HOME="$PRESEEDED_HOME/.codex-second" \
+ZSHRC="$PRESEEDED_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/preseed-install.out"
+if [ "$(grep -c "second-codex-shell.zsh" "$PRESEEDED_HOME/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer appended duplicate helper source line to existing marker block"
+  cat "$PRESEEDED_HOME/.zshrc"
+  exit 1
+fi
+if grep -Fq "source '$PRESEEDED_HOME/.codex-account-switch/second-codex-shell.zsh'" "$PRESEEDED_HOME/.zshrc"; then
+  echo "FAIL installer appended unmarked absolute helper source line to existing marker block"
+  cat "$PRESEEDED_HOME/.zshrc"
+  exit 1
+fi
+
+MANAGED_HOME="$SANDBOX/managed-home"
+MANAGED_REPO="$SANDBOX/managed-config"
+mkdir -p "$MANAGED_HOME" "$MANAGED_REPO"
+printf '# managed shell config\n' > "$MANAGED_REPO/zshrc"
+ln -s "$MANAGED_REPO/zshrc" "$MANAGED_HOME/.zshrc"
+if HOME="$MANAGED_HOME" \
+  CODEX_A_HOME="$MANAGED_HOME/.codex" \
+  SECOND_CODEX_HOME="$MANAGED_HOME/.codex-second" \
+  ZSHRC="$MANAGED_HOME/.zshrc" \
+  "$REPO_ROOT/install.sh" >"$SANDBOX/managed-install.out" 2>&1; then
+  echo "FAIL installer mutated symlink-managed .zshrc instead of failing loud"
+  cat "$SANDBOX/managed-install.out"
+  exit 1
+fi
+if grep -Fq "second-codex-shell.zsh" "$MANAGED_REPO/zshrc"; then
+  echo "FAIL installer appended helper source line through symlink-managed .zshrc"
+  cat "$MANAGED_REPO/zshrc"
+  exit 1
+fi
+grep -Fq "Refusing to edit symlink-managed shell config" "$SANDBOX/managed-install.out"
+grep -Fq "Add this block to the real config file yourself" "$SANDBOX/managed-install.out"
 
 cat > "$SANDBOX/install \"root/second-codex" <<'SH'
 #!/usr/bin/env bash

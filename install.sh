@@ -40,14 +40,28 @@ link_shared_path memories_extensions
 
 LINE="source $(shell_quote "$INSTALL_ROOT/second-codex-shell.zsh")"
 LEGACY_LINE="source $INSTALL_ROOT/second-codex-shell.zsh"
+MARKER_BEGIN="# >>> second-codex shell helper >>>"
+MARKER_END="# <<< second-codex shell helper <<<"
 
 ensure_source_line() {
   local file="$1"
-  if [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
+  if [ -f "$file" ] && awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" '
+    $0 == begin { in_block = 1; next }
+    $0 == end { in_block = 0; next }
+    in_block && index($0, "second-codex-shell.zsh") { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$file"; then
+    echo "second-codex shell helper already sourced in marked block in $file"
+  elif [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
     echo "second-codex shell helper already sourced in $file"
+  elif [ -L "$file" ]; then
+    echo "Refusing to edit symlink-managed shell config: $file -> $(readlink "$file")" >&2
+    echo "Add this block to the real config file yourself:" >&2
+    printf '%s\n%s\n%s\n' "$MARKER_BEGIN" "$LINE" "$MARKER_END" >&2
+    return 73
   else
-    printf '\n%s\n' "$LINE" >> "$file"
-    echo "Added shell helper source line to $file"
+    printf '\n%s\n%s\n%s\n' "$MARKER_BEGIN" "$LINE" "$MARKER_END" >> "$file"
+    echo "Added marked shell helper source block to $file"
   fi
 }
 
