@@ -336,6 +336,132 @@ case "$CT_PRODUCED" in
     *"$ENCODED_OVERRIDE"*) : ;;
     *) echo "FAIL: --target-cwd not honored: $CT_PRODUCED"; exit 1 ;;
 esac
+if grep -q "^note:" "$SANDBOX/ct.out"; then
+  echo "FAIL: explicit --target-cwd should not emit cwd mismatch note"
+  cat "$SANDBOX/ct.out"
+  exit 1
+fi
+
+# Without --target-cwd, source-cwd preservation remains the default. When the
+# invoking shell is in a different cwd, print a discoverability hint so the
+# bare `claude --resume` line is not a silent current-project cliff.
+CH_UUID="00000000-0000-7000-8000-000000000040"
+CH_SOURCE_CWD="$SANDBOX/source project"
+CH_INVOKE_CWD="$SANDBOX/invoke project"
+CH_INVOKE_REAL="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CH_INVOKE_CWD")"
+CH_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-01-$CH_UUID.jsonl"
+mkdir -p "$CH_SOURCE_CWD" "$CH_INVOKE_CWD"
+cat > "$CH_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CH_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CH_SOURCE_CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+(
+  cd "$CH_INVOKE_CWD"
+  CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    "$REPO_ROOT/second-codex" handoff-to-claude "$CH_UUID" >"$SANDBOX/ch.stdout" 2>"$SANDBOX/ch.stderr"
+)
+grep -q "^resume with: claude --resume" "$SANDBOX/ch.stdout" || {
+  echo "FAIL: cwd mismatch stdout lost resume command"; cat "$SANDBOX/ch.stdout"; exit 1; }
+if grep -q "^note:" "$SANDBOX/ch.stdout"; then
+  echo "FAIL: cwd mismatch notes should be on stderr, not stdout"
+  cat "$SANDBOX/ch.stdout"
+  exit 1
+fi
+grep -q -- "--target-cwd" "$SANDBOX/ch.stderr" || {
+  echo "FAIL: cwd mismatch stderr did not mention --target-cwd"; cat "$SANDBOX/ch.stderr"; exit 1; }
+grep -q "$CH_SOURCE_CWD" "$SANDBOX/ch.stderr" || {
+  echo "FAIL: cwd mismatch stderr did not mention source cwd"; cat "$SANDBOX/ch.stderr"; exit 1; }
+grep -q "$CH_INVOKE_REAL" "$SANDBOX/ch.stderr" || {
+  echo "FAIL: cwd mismatch stderr did not mention invoking cwd"; cat "$SANDBOX/ch.stderr"; exit 1; }
+
+CM_UUID="00000000-0000-7000-8000-000000000041"
+CM_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-02-$CM_UUID.jsonl"
+cat > "$CM_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CM_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CH_INVOKE_REAL","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+(
+  cd "$CH_INVOKE_CWD"
+  CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    "$REPO_ROOT/second-codex" handoff-to-claude "$CM_UUID" >"$SANDBOX/cm.out" 2>&1
+)
+if grep -q "^note: .*--target-cwd" "$SANDBOX/cm.out"; then
+  echo "FAIL: cwd match output should not print --target-cwd mismatch hint"
+  cat "$SANDBOX/cm.out"
+  exit 1
+fi
+
+CH_TILDE_UUID="00000000-0000-7000-8000-000000000042"
+CH_TILDE_HOME="$SANDBOX/tilde-home"
+CH_TILDE_SOURCE="~/source project"
+CH_TILDE_EXPANDED="$CH_TILDE_HOME/source project"
+CH_TILDE_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-03-$CH_TILDE_UUID.jsonl"
+mkdir -p "$CH_TILDE_EXPANDED"
+cat > "$CH_TILDE_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CH_TILDE_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CH_TILDE_SOURCE","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+(
+  cd "$CH_INVOKE_CWD"
+  HOME="$CH_TILDE_HOME" CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    "$REPO_ROOT/second-codex" handoff-to-claude "$CH_TILDE_UUID" >"$SANDBOX/ch-tilde.stdout" 2>"$SANDBOX/ch-tilde.stderr"
+)
+grep -Fq "$CH_TILDE_EXPANDED" "$SANDBOX/ch-tilde.stderr" || {
+  echo "FAIL: tilde source cwd should emit cd hint with expanded path"
+  cat "$SANDBOX/ch-tilde.stderr"
+  exit 1
+}
+grep -Fq "&& claude --resume" "$SANDBOX/ch-tilde.stderr" || {
+  echo "FAIL: tilde source cwd should emit claude resume command in cd hint"
+  cat "$SANDBOX/ch-tilde.stderr"
+  exit 1
+}
+
+CH_MISSING_UUID="00000000-0000-7000-8000-000000000043"
+CH_MISSING_SOURCE="$SANDBOX/missing-source-project"
+CH_MISSING_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-04-$CH_MISSING_UUID.jsonl"
+cat > "$CH_MISSING_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CH_MISSING_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CH_MISSING_SOURCE","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+(
+  cd "$CH_INVOKE_CWD"
+  CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    "$REPO_ROOT/second-codex" handoff-to-claude "$CH_MISSING_UUID" >"$SANDBOX/ch-missing.stdout" 2>"$SANDBOX/ch-missing.stderr"
+)
+grep -q -- "--target-cwd" "$SANDBOX/ch-missing.stderr" || {
+  echo "FAIL: missing source cwd should still emit generic --target-cwd hint"
+  cat "$SANDBOX/ch-missing.stderr"
+  exit 1
+}
+if grep -Fq "&& claude --resume" "$SANDBOX/ch-missing.stderr"; then
+  echo "FAIL: missing source cwd should not emit cd resume hint"
+  cat "$SANDBOX/ch-missing.stderr"
+  exit 1
+fi
+
+CH_NO_CWD_UUID="00000000-0000-7000-8000-000000000044"
+CH_NO_CWD_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-04-05-$CH_NO_CWD_UUID.jsonl"
+CH_INVOKE_ENCODED="$(encode_claude_dir "$CH_INVOKE_REAL")"
+cat > "$CH_NO_CWD_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$CH_NO_CWD_UUID","timestamp":"2026-05-04T00:00:00.000Z","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"placeholder","images":[],"local_images":[],"text_elements":[]}}
+EOF
+(
+  cd "$CH_INVOKE_CWD"
+  CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+    "$REPO_ROOT/second-codex" handoff-to-claude "$CH_NO_CWD_UUID" >"$SANDBOX/ch-no-cwd.stdout" 2>"$SANDBOX/ch-no-cwd.stderr"
+)
+CH_NO_CWD_PRODUCED="$(grep '^converted:' "$SANDBOX/ch-no-cwd.stdout" | awk -F'-> ' '{print $2}')"
+case "$CH_NO_CWD_PRODUCED" in
+    *"$CH_INVOKE_ENCODED"*) : ;;
+    *) echo "FAIL: no-source-cwd fallback did not use invoking cwd: $CH_NO_CWD_PRODUCED"; exit 1 ;;
+esac
+if grep -q "^note:" "$SANDBOX/ch-no-cwd.stderr"; then
+  echo "FAIL: no-source-cwd fallback should not emit mismatch notes"
+  cat "$SANDBOX/ch-no-cwd.stderr"
+  exit 1
+fi
 echo "wrapper --help / --target-cwd PASSED"
 
 # ---------------------------------------------------------------------------
@@ -421,6 +547,11 @@ CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
 TI_NEW_UUID="$(grep '^new session UUID:' "$SANDBOX/malformed.stdout" | awk '{print $NF}')"
 TI_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TI_NEW_UUID.jsonl"
 grep -q "warning: skipping malformed JSON line" "$SANDBOX/malformed.stderr"
+if [ "$(grep -c "warning: skipping malformed JSON line" "$SANDBOX/malformed.stderr")" -ne 1 ]; then
+    echo "FAIL: malformed JSON warning emitted more than once"
+    cat "$SANDBOX/malformed.stderr"
+    exit 1
+fi
 grep -q "JSONDecodeError" "$SANDBOX/malformed.stderr"
 # stderr should NOT echo the offending line content (privacy: avoid leaking
 # source bytes). The bad line we wrote contains the literal substring "this".

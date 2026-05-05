@@ -96,6 +96,15 @@ second-codex handoff-to-claude <codex_session_id>
 # Output prints the new Claude session UUID and the resume command.
 claude --resume <new_uuid>
 
+# By default, the converted Claude session is written under the source
+# Codex rollout's cwd namespace. To resume from your current project cwd:
+second-codex handoff-to-claude <codex_session_id> --target-cwd "$PWD"
+claude --resume <new_uuid>
+
+# If you omit --target-cwd from a different cwd, handoff-to-claude keeps the
+# source-cwd default and prints stderr notes with the source cwd, current cwd,
+# a --target-cwd rerun hint, and a cd <source-cwd> resume alternative.
+
 # Started in Claude Code, want to continue in Codex:
 second-codex handoff-from-claude <claude_session_id>
 codex resume <new_uuid>
