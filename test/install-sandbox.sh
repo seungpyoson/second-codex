@@ -99,7 +99,8 @@ SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshenv.log" \
 HOME="$SANDBOX/home" \
 ZDOTDIR="$SANDBOX/home" \
 PATH="$SANDBOX/bin:$PATH" \
-  zsh -c 'codex exec hello'
+env -u CODEX_ACCOUNT_SLOT -u SECOND_CODEX_ACTIVE_ACCOUNT \
+zsh -c 'codex exec hello'
 grep -Fxq "primary-codex:exec hello account=missing active=missing" "$SANDBOX/zshenv.log"
 if grep -Fq "installed-helper:_session-hint" "$SANDBOX/zshenv.log"; then
   echo "FAIL non-interactive zsh command printed a session hint"

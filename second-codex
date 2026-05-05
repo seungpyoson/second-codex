@@ -180,8 +180,8 @@ ensure_shared_path() {
 }
 
 ensure_shared_paths() {
-  ensure_shared_path memories
-  ensure_shared_path memories_extensions
+  ensure_shared_path memories || return $?
+  ensure_shared_path memories_extensions || return $?
 }
 
 reroute_notice() {
@@ -234,14 +234,14 @@ refuse_same_homes() {
 guard_home_roots() {
   refuse_symlink_home "primary" "$A_HOME" || return $?
   refuse_symlink_home "second" "$B_HOME" || return $?
-  refuse_same_homes
+  refuse_same_homes || return $?
 }
 
 guard_manifest_homes() {
   load_manifest || return $?
   guard_home_roots || return $?
   fail_on_unknown_entries "primary" "$A_HOME" || return $?
-  fail_on_unknown_entries "second" "$B_HOME"
+  fail_on_unknown_entries "second" "$B_HOME" || return $?
 }
 
 home_has_environment_sentinel() {
@@ -317,6 +317,8 @@ token_is_runtime_mutation() {
 }
 
 classify_known_command() {
+  # Production callers pass a command token, but direct helper probes and
+  # future parser refactors must not read `$1` under nounset with no args.
   if (( $# == 0 )); then
     echo second
     return 0
@@ -503,7 +505,7 @@ sync_projection() {
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
     excludes+=(--exclude="/$pattern")
   done
-  rsync -a --delete "${excludes[@]}" "$A_HOME/" "$B_HOME/"
+  rsync -a --delete "${excludes[@]}" "$A_HOME/" "$B_HOME/" || return $?
 }
 
 require_runtime_dependencies() {
@@ -1475,8 +1477,8 @@ ensure_shim() {
     echo "second-codex refused to use symlinked shim directory: $BIN_DIR" >&2
     return 73
   fi
-  (umask 077; mkdir -p "$BIN_DIR")
-  chmod 700 "$BIN_DIR"
+  (umask 077; mkdir -p "$BIN_DIR") || return $?
+  chmod 700 "$BIN_DIR" || return $?
   local owner_uid
   owner_uid="$(stat -f '%u' "$BIN_DIR" 2>/dev/null || stat -c '%u' "$BIN_DIR")"
   if [[ "$owner_uid" != "$(id -u)" ]]; then
@@ -1494,14 +1496,14 @@ ensure_shim() {
     return 69
   fi
   local tmp_shim
-  tmp_shim="$(umask 077; mktemp "$BIN_DIR/codex.XXXXXX")"
+  tmp_shim="$(umask 077; mktemp "$BIN_DIR/codex.XXXXXX")" || return $?
   cat > "$tmp_shim" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 exec "${SECOND_CODEX_SWITCH_WRAPPER:?missing SECOND_CODEX_SWITCH_WRAPPER}" "$@"
 EOF
-  chmod 700 "$tmp_shim"
-  mv "$tmp_shim" "$BIN_DIR/codex"
+  chmod 700 "$tmp_shim" || return $?
+  mv "$tmp_shim" "$BIN_DIR/codex" || return $?
 }
 
 auth_status() {
@@ -1647,7 +1649,7 @@ main() {
       ;;
     handoff)
       shift
-      guard_manifest_homes
+      guard_manifest_homes || return $?
       handoff_session "$@"
       return
       ;;
@@ -1663,7 +1665,7 @@ main() {
       ;;
     session-id)
       shift
-      guard_manifest_homes
+      guard_manifest_homes || return $?
       case "${1:-}" in
         --primary)
           if [[ "${2:-}" == --* ]]; then
@@ -1700,8 +1702,8 @@ main() {
   fi
 
   if [[ "${SECOND_CODEX_DOCTOR_INTERNAL:-0}" != "1" ]]; then
-    ensure_shared_paths
-    ensure_shim
+    ensure_shared_paths || return $?
+    ensure_shim || return $?
   fi
 
   local classification
@@ -1712,13 +1714,13 @@ main() {
     return 64
   fi
 
-  require_runtime_dependencies "$classification"
+  require_runtime_dependencies "$classification" || return $?
 
   if [[ "$classification" == "second" ]]; then
-    preflight_second_resume "$@"
+    preflight_second_resume "$@" || return $?
   fi
 
-  sync_projection
+  sync_projection || return $?
   case "$classification" in
     reroute)
       reroute_notice
