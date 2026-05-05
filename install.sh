@@ -139,14 +139,14 @@ marked_block_status() {
   fi
   awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" -v line="$LINE" -v legacy="$LEGACY_LINE" \
     -v default_home_line="$DEFAULT_HOME_LINE" -v default_home_ok="$default_home_ok" '
-    $0 == begin { in_block = 1; saw_begin = 1; next }
-    $0 == end { in_block = 0; saw_end = 1; next }
+    $0 == begin { in_block = 1; begin_count += 1; next }
+    $0 == end { in_block = 0; end_count += 1; next }
     in_block && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
     END {
-      if (current && saw_begin && saw_end) {
+      if (current && begin_count == 1 && end_count == 1) {
         exit 0
       }
-      if (saw_begin && saw_end) {
+      if (begin_count > 0 && end_count > 0) {
         exit 2
       }
       exit 1
@@ -204,7 +204,7 @@ ensure_source_line() {
   fi
   if [ "$block_status" -eq 0 ]; then
     echo "second-codex shell helper already sourced in marked block in $file"
-  elif [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
+  elif [ "$block_status" -ne 2 ] && [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
     echo "second-codex shell helper already sourced in $file"
   elif [ -L "$file" ]; then
     echo "Refusing to edit symlink-managed shell config: $file -> $(readlink "$file")" >&2

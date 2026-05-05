@@ -233,6 +233,36 @@ if [ "$(grep -c "second-codex-shell.zsh" "$DUP_HOME/.zshrc")" -ne 1 ]; then
 fi
 grep -Fxq "source '$DUP_HOME/new-root/second-codex-shell.zsh'" "$DUP_HOME/.zshrc"
 
+CURRENT_DUP_HOME="$SANDBOX/current-duplicate-block-home"
+mkdir -p "$CURRENT_DUP_HOME"
+cat > "$CURRENT_DUP_HOME/.zshrc" <<ZSHRC
+# >>> second-codex shell helper >>>
+source '$CURRENT_DUP_HOME/new-root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+export KEEP_CURRENT_DUP=1
+# >>> second-codex shell helper >>>
+source '$CURRENT_DUP_HOME/old-root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+ZSHRC
+HOME="$CURRENT_DUP_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$CURRENT_DUP_HOME/new-root" \
+CODEX_A_HOME="$CURRENT_DUP_HOME/.codex" \
+SECOND_CODEX_HOME="$CURRENT_DUP_HOME/.codex-second" \
+ZSHRC="$CURRENT_DUP_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/current-duplicate-block-install.out"
+grep -Fxq "export KEEP_CURRENT_DUP=1" "$CURRENT_DUP_HOME/.zshrc"
+if [ "$(grep -c "# >>> second-codex shell helper >>>" "$CURRENT_DUP_HOME/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer skipped duplicate helper collapse when one block was already current"
+  cat "$CURRENT_DUP_HOME/.zshrc"
+  exit 1
+fi
+if [ "$(grep -c "second-codex-shell.zsh" "$CURRENT_DUP_HOME/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer left duplicate helper source lines when one block was already current"
+  cat "$CURRENT_DUP_HOME/.zshrc"
+  exit 1
+fi
+grep -Fxq "source '$CURRENT_DUP_HOME/new-root/second-codex-shell.zsh'" "$CURRENT_DUP_HOME/.zshrc"
+
 MALFORMED_HOME="$SANDBOX/malformed-home"
 mkdir -p "$MALFORMED_HOME"
 cat > "$MALFORMED_HOME/.zshrc" <<ZSHRC
