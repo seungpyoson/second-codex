@@ -4,6 +4,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/second-codex-doctor-sandbox.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
+mkdir -p "$SANDBOX/test-source/lib"
+TEST_SOURCE="$(cd "$SANDBOX/test-source" && pwd)"
+cp "$REPO_ROOT/install.sh" "$REPO_ROOT/second-codex" "$REPO_ROOT/second-codex-shell.zsh" "$REPO_ROOT/ownership-manifest.txt" "$REPO_ROOT/README.md" "$TEST_SOURCE/"
+cp "$REPO_ROOT/lib/session_convert.py" "$TEST_SOURCE/lib/session_convert.py"
 
 mkdir -p "$SANDBOX/home" "$SANDBOX/home-a" "$SANDBOX/home-second"
 echo '{bad json' > "$SANDBOX/home-a/auth.json"
@@ -32,7 +36,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$DEFAULT_BLOCK_SECOND" \
 ZSHRC="$DEFAULT_BLOCK_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$DEFAULT_BLOCK_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/default-block-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/default-block-install.out"
 HOME="$DEFAULT_BLOCK_HOME" \
 SECOND_CODEX_SWITCH_ROOT="$DEFAULT_BLOCK_HOME/.codex-account-switch" \
 CODEX_A_HOME="$SANDBOX/home-a" \
@@ -53,7 +57,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$LEGACY_SECOND" \
 ZSHRC="$LEGACY_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$LEGACY_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/legacy-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/legacy-install.out"
 printf "source '%s'\n" "$LEGACY_HOME/.codex-account-switch/second-codex-shell.zsh" > "$LEGACY_HOME/.zshrc"
 HOME="$LEGACY_HOME" \
 SECOND_CODEX_SWITCH_ROOT="$LEGACY_HOME/.codex-account-switch" \
@@ -75,7 +79,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$DUP_SECOND" \
 ZSHRC="$DUP_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$DUP_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/duplicate-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/duplicate-install.out"
 cat > "$DUP_HOME/.zshrc" <<ZSHRC
 # >>> second-codex shell helper >>>
 source '$DUP_HOME/new-root/second-codex-shell.zsh'
@@ -108,7 +112,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$COMMENTED_SECOND" \
 ZSHRC="$COMMENTED_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$COMMENTED_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/commented-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/commented-install.out"
 cat > "$COMMENTED_HOME/.zshrc" <<'ZSHRC'
 # >>> second-codex shell helper >>>
 # [[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"
@@ -139,7 +143,7 @@ SECOND_CODEX_SWITCH_ROOT="$MANAGED_HOME/.codex-account-switch" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/doctor-managed-second" \
 SECOND_CODEX_PATH_DIR="$MANAGED_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+"$TEST_SOURCE/install.sh" >/dev/null 2>&1 || true
 HOME="$MANAGED_HOME" \
 SECOND_CODEX_SWITCH_ROOT="$MANAGED_HOME/.codex-account-switch" \
 CODEX_A_HOME="$SANDBOX/home-a" \
@@ -147,7 +151,7 @@ SECOND_CODEX_HOME="$SANDBOX/doctor-managed-second" \
 SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-managed-shim" \
 ZSHRC="$MANAGED_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$MANAGED_HOME/.local/bin" \
-"$REPO_ROOT/second-codex" doctor >"$SANDBOX/doctor-managed.out" 2>"$SANDBOX/doctor-managed.err" || true
+"$TEST_SOURCE/second-codex" doctor >"$SANDBOX/doctor-managed.out" 2>"$SANDBOX/doctor-managed.err" || true
 grep -q "FAIL shell helper block missing or stale in symlink-managed config" "$SANDBOX/doctor-managed.out"
 grep -q "Add this block to the real config file yourself" "$SANDBOX/doctor-managed.err"
 grep -q "# >>> second-codex shell helper >>>" "$SANDBOX/doctor-managed.err"
@@ -168,7 +172,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$MALFORMED_SECOND" \
 ZSHRC="$MALFORMED_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$MALFORMED_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/malformed-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/malformed-install.out"
 cat > "$MALFORMED_HOME/.zshrc" <<'ZSHRC'
 # >>> second-codex shell helper >>>
 source '$HOME/.codex-account-switch/second-codex-shell.zsh'
@@ -197,7 +201,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$MISSING_WRAPPER_SECOND" \
 ZSHRC="$MISSING_WRAPPER_HOME/.zshrc" \
 SECOND_CODEX_PATH_DIR="$MISSING_WRAPPER_HOME/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/missing-wrapper-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/missing-wrapper-install.out"
 rm "$MISSING_WRAPPER_HOME/.codex-account-switch/second-codex"
 if SECOND_CODEX_SWITCH_ROOT="$MISSING_WRAPPER_HOME/.codex-account-switch" \
   CODEX_A_HOME="$SANDBOX/home-a" \
@@ -206,7 +210,7 @@ if SECOND_CODEX_SWITCH_ROOT="$MISSING_WRAPPER_HOME/.codex-account-switch" \
   ZSHRC="$MISSING_WRAPPER_HOME/.zshrc" \
   SECOND_CODEX_PATH_DIR="$MISSING_WRAPPER_HOME/.local/bin" \
   PATH="$MISSING_WRAPPER_HOME/.local/bin:$PATH" \
-  "$REPO_ROOT/second-codex" doctor >"$SANDBOX/doctor-missing-wrapper.out" 2>&1; then
+  "$TEST_SOURCE/second-codex" doctor >"$SANDBOX/doctor-missing-wrapper.out" 2>&1; then
   echo "FAIL doctor accepted a missing installed wrapper"
   cat "$SANDBOX/doctor-missing-wrapper.out"
   exit 1
@@ -219,7 +223,7 @@ CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/install.out"
 
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
@@ -229,7 +233,7 @@ SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
 PATH="$SANDBOX/home/.local/bin:$PATH" \
-"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-default.out"
+"$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-default.out"
 grep -q "primary_auth=corrupt auth file" "$SANDBOX/doctor-default.out"
 
 rm "$SANDBOX/home-second/memories" "$SANDBOX/home-second/memories_extensions"
@@ -240,14 +244,14 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   ZSHRC="$SANDBOX/home/.zshrc" \
   SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
   PATH="$SANDBOX/home/.local/bin:$PATH" \
-  "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-missing-links.out" 2>&1; then
+  "$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-missing-links.out" 2>&1; then
   echo "FAIL doctor silently repaired missing shared-memory symlinks"
   exit 1
 fi
 grep -q "FAIL memories is not a symlink to primary" "$SANDBOX/doctor-missing-links.out"
 grep -q "FAIL memories_extensions is not a symlink to primary" "$SANDBOX/doctor-missing-links.out"
-test ! -e "$SANDBOX/home-second/memories"
-test ! -e "$SANDBOX/home-second/memories_extensions"
+[[ ! -e "$SANDBOX/home-second/memories" ]]
+[[ ! -e "$SANDBOX/home-second/memories_extensions" ]]
 if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   CODEX_A_HOME="$SANDBOX/home-a" \
   SECOND_CODEX_HOME="$SANDBOX/home-second" \
@@ -255,14 +259,14 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   ZSHRC="$SANDBOX/home/.zshrc" \
   SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
   PATH="$SANDBOX/home/.local/bin:$PATH" \
-  "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-missing-links-again.out" 2>&1; then
+  "$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-missing-links-again.out" 2>&1; then
   echo "FAIL doctor repaired missing shared-memory symlinks during diagnostics"
   exit 1
 fi
 grep -q "FAIL memories is not a symlink to primary" "$SANDBOX/doctor-missing-links-again.out"
 grep -q "FAIL memories_extensions is not a symlink to primary" "$SANDBOX/doctor-missing-links-again.out"
-test ! -e "$SANDBOX/home-second/memories"
-test ! -e "$SANDBOX/home-second/memories_extensions"
+[[ ! -e "$SANDBOX/home-second/memories" ]]
+[[ ! -e "$SANDBOX/home-second/memories_extensions" ]]
 ln -s "$SANDBOX/home-a/memories" "$SANDBOX/home-second/memories"
 ln -s "$SANDBOX/home-a/memories_extensions" "$SANDBOX/home-second/memories_extensions"
 
@@ -274,7 +278,7 @@ ZSHRC="$SANDBOX/home/.zshrc" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
 PATH="$SANDBOX/home/.local/bin:$PATH" \
 SECOND_CODEX_DOCTOR_SHOW_EMAIL=1 \
-"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor.out"
+"$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor.out"
 
 grep -q "primary_auth=corrupt auth file" "$SANDBOX/doctor.out"
 grep -q "PASS no unknown primary CODEX_HOME entries" "$SANDBOX/doctor.out"
@@ -303,7 +307,7 @@ SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
 PATH="$SANDBOX/home/.local/bin:$PATH" \
-"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-entrypoint-whitespace.out"
+"$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-entrypoint-whitespace.out"
 grep -q "PASS PATH entrypoint points to install root" "$SANDBOX/doctor-entrypoint-whitespace.out"
 
 chmod 600 "$SANDBOX/home/.local/bin/second-codex"
@@ -314,7 +318,7 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   ZSHRC="$SANDBOX/home/.zshrc" \
   SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
   PATH="$SANDBOX/home/.local/bin:$PATH" \
-  "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-entrypoint-nonexec.out" 2>&1; then
+  "$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-entrypoint-nonexec.out" 2>&1; then
   echo "FAIL doctor accepted a non-executable PATH entrypoint"
   cat "$SANDBOX/doctor-entrypoint-nonexec.out"
   exit 1
@@ -331,7 +335,7 @@ if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
   ZSHRC="$SANDBOX/home/.zshrc" \
   SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
   PATH="$SANDBOX/home/.local/bin:$PATH" \
-  "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-entrypoint-symlink.out" 2>&1; then
+  "$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-entrypoint-symlink.out" 2>&1; then
   echo "FAIL doctor accepted a symlinked PATH entrypoint"
   cat "$SANDBOX/doctor-entrypoint-symlink.out"
   exit 1
@@ -343,7 +347,7 @@ SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \
 SECOND_CODEX_HOME="$SANDBOX/home-second" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
-./install.sh > "$SANDBOX/reinstall-path-entrypoint.out"
+"$TEST_SOURCE/install.sh" > "$SANDBOX/reinstall-path-entrypoint.out"
 
 ln -s "$SANDBOX/home/.local/bin" "$SANDBOX/path-link"
 HOME="$SANDBOX/home" \
@@ -355,7 +359,7 @@ ZSHRC="$SANDBOX/home/.zshrc" \
 SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
 PATH="$SANDBOX/path-link:$PATH" \
 SECOND_CODEX_DOCTOR_SHOW_EMAIL=1 \
-"$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-symlink-path.out"
+"$TEST_SOURCE/second-codex" doctor > "$SANDBOX/doctor-symlink-path.out"
 grep -q "PASS PATH resolves second-codex entrypoint" "$SANDBOX/doctor-symlink-path.out"
 if grep -q "FAIL PATH does not resolve second-codex entrypoint" "$SANDBOX/doctor-symlink-path.out"; then
   cat "$SANDBOX/doctor-symlink-path.out"
