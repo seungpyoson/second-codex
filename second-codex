@@ -1694,6 +1694,13 @@ doctor_shell_helper_block() {
     echo "PASS shell helper block points to install root"
     return 0
   fi
+  if [[ -f "$zshrc" ]] && {
+    grep -Fxq "source $(shell_quote "$ROOT/second-codex-shell.zsh")" "$zshrc" \
+      || grep -Fxq "source $ROOT/second-codex-shell.zsh" "$zshrc"
+  }; then
+    echo "PASS shell helper source points to install root"
+    return 0
+  fi
   if [[ -L "$zshrc" ]]; then
     echo "FAIL shell helper block missing or stale in symlink-managed config"
     echo "Add this block to the real config file yourself:" >&2

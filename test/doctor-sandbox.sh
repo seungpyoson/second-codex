@@ -44,6 +44,28 @@ PATH="$DEFAULT_BLOCK_HOME/.local/bin:$PATH" \
 "$DEFAULT_BLOCK_HOME/.local/bin/second-codex" doctor >"$SANDBOX/default-block-doctor.out"
 grep -q "PASS shell helper block points to install root" "$SANDBOX/default-block-doctor.out"
 
+LEGACY_HOME="$SANDBOX/doctor-legacy-home"
+LEGACY_SECOND="$SANDBOX/doctor-legacy-second"
+mkdir -p "$LEGACY_HOME" "$LEGACY_SECOND"
+HOME="$LEGACY_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$LEGACY_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$LEGACY_SECOND" \
+ZSHRC="$LEGACY_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$LEGACY_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/legacy-install.out"
+printf "source '%s'\n" "$LEGACY_HOME/.codex-account-switch/second-codex-shell.zsh" > "$LEGACY_HOME/.zshrc"
+HOME="$LEGACY_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$LEGACY_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$LEGACY_SECOND" \
+SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-legacy-shim" \
+ZSHRC="$LEGACY_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$LEGACY_HOME/.local/bin" \
+PATH="$LEGACY_HOME/.local/bin:$PATH" \
+"$LEGACY_HOME/.local/bin/second-codex" doctor >"$SANDBOX/doctor-legacy.out"
+grep -q "PASS shell helper source points to install root" "$SANDBOX/doctor-legacy.out"
+
 COMMENTED_HOME="$SANDBOX/doctor-commented-home"
 COMMENTED_SECOND="$SANDBOX/doctor-commented-second"
 mkdir -p "$COMMENTED_HOME" "$COMMENTED_SECOND"
