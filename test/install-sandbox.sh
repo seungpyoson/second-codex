@@ -15,6 +15,9 @@ ZSHENV="$SANDBOX/home/.zshenv" \
 
 test -x "$SANDBOX/install \"root/second-codex"
 test -f "$SANDBOX/install \"root/ownership-manifest.txt"
+test "$(cat "$SANDBOX/install \"root/source-root")" = "$REPO_ROOT"
+test -x "$SANDBOX/home/.local/bin/second-codex"
+grep -Fxq "SECOND_CODEX_SWITCH_ROOT='$SANDBOX/install \"root' exec '$SANDBOX/install \"root/second-codex' \"\$@\"" "$SANDBOX/home/.local/bin/second-codex"
 test -L "$SANDBOX/home/.codex-second/memories"
 test -L "$SANDBOX/home/.codex-second/memories_extensions"
 test "$(readlink "$SANDBOX/home/.codex-second/memories")" = "$SANDBOX/home/.codex/memories"
@@ -42,6 +45,49 @@ if [[ -e "$SANDBOX/home/.zshenv" ]] && grep -Fq "second-codex-shell.zsh" "$SANDB
   echo "FAIL installer sourced helper from .zshenv"
   exit 1
 fi
+
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_REAL_CODEX="$SANDBOX/mock-unused-codex" \
+  "$SANDBOX/home/.local/bin/second-codex" account >"$SANDBOX/path-entrypoint.out"
+grep -Fq "account_slot=second" "$SANDBOX/path-entrypoint.out"
+
+printf '\n# stale-installed-copy\n' >> "$SANDBOX/install \"root/second-codex"
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
+CODEX_A_HOME="$SANDBOX/home/.codex" \
+SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+"$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update.out"
+grep -Fq "Updated second-codex install from $REPO_ROOT" "$SANDBOX/update.out"
+if grep -Fq "# stale-installed-copy" "$SANDBOX/install \"root/second-codex"; then
+  echo "FAIL second-codex update did not refresh installed wrapper from recorded source"
+  exit 1
+fi
+if [ "$(grep -c "second-codex-shell.zsh" "$SANDBOX/home/.zshrc")" -ne 1 ]; then
+  echo "FAIL second-codex update duplicated helper source line"
+  cat "$SANDBOX/home/.zshrc"
+  exit 1
+fi
+
+printf '\n# stale-installed-copy\n' >> "$SANDBOX/install \"root/second-codex"
+HOME="$SANDBOX/home" \
+SECOND_CODEX_TEST_FORCE_STALE_WARNING=1 \
+  "$SANDBOX/home/.local/bin/second-codex" account >"$SANDBOX/stale-first.out" 2>"$SANDBOX/stale-first.err"
+grep -Fq "second-codex: installed wrapper is stale. Run \`second-codex update\`." "$SANDBOX/stale-first.err"
+HOME="$SANDBOX/home" \
+SECOND_CODEX_TEST_FORCE_STALE_WARNING=1 \
+  "$SANDBOX/home/.local/bin/second-codex" account >"$SANDBOX/stale-second.out" 2>"$SANDBOX/stale-second.err"
+if grep -Fq "installed wrapper is stale" "$SANDBOX/stale-second.err"; then
+  echo "FAIL stale install warning repeated after version was acknowledged"
+  cat "$SANDBOX/stale-second.err"
+  exit 1
+fi
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
+CODEX_A_HOME="$SANDBOX/home/.codex" \
+SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+"$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update-after-stale.out"
 
 PRESEEDED_HOME="$SANDBOX/preseed-home"
 mkdir -p "$PRESEEDED_HOME"

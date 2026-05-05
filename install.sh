@@ -4,6 +4,8 @@ set -euo pipefail
 INSTALL_ROOT="${SECOND_CODEX_SWITCH_ROOT:-$HOME/.codex-account-switch}"
 PRIMARY_HOME="${CODEX_A_HOME:-$HOME/.codex}"
 SECOND_HOME="${SECOND_CODEX_HOME:-$HOME/.codex-second}"
+SOURCE_ROOT="$(cd "$(dirname "$0")" && pwd)"
+PATH_DIR="${SECOND_CODEX_PATH_DIR:-$HOME/.local/bin}"
 
 shell_quote() {
   local value="${1//\'/\'\\\'\'}"
@@ -11,13 +13,14 @@ shell_quote() {
 }
 
 mkdir -p "$INSTALL_ROOT"
-cp "$(dirname "$0")/second-codex" "$INSTALL_ROOT/second-codex"
-cp "$(dirname "$0")/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
-cp "$(dirname "$0")/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
-cp "$(dirname "$0")/README.md" "$INSTALL_ROOT/README.md"
+cp "$SOURCE_ROOT/second-codex" "$INSTALL_ROOT/second-codex"
+cp "$SOURCE_ROOT/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
+cp "$SOURCE_ROOT/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
+cp "$SOURCE_ROOT/README.md" "$INSTALL_ROOT/README.md"
 mkdir -p "$INSTALL_ROOT/lib"
-cp "$(dirname "$0")/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
+cp "$SOURCE_ROOT/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
 chmod +x "$INSTALL_ROOT/second-codex"
+printf '%s\n' "$SOURCE_ROOT" > "$INSTALL_ROOT/source-root"
 
 link_shared_path() {
   local name="$1"
@@ -37,6 +40,25 @@ link_shared_path() {
 
 link_shared_path memories
 link_shared_path memories_extensions
+
+ensure_path_entrypoint() {
+  local target="$PATH_DIR/second-codex"
+  local tmp_entrypoint
+  mkdir -p "$PATH_DIR"
+  if [[ -e "$target" && ! -f "$target" || -L "$target" ]]; then
+    echo "Refusing to replace unsafe PATH entrypoint: $target" >&2
+    return 73
+  fi
+  tmp_entrypoint="$(umask 077; mktemp "$PATH_DIR/second-codex.XXXXXX")" || return $?
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'SECOND_CODEX_SWITCH_ROOT=%s exec %s "$@"\n' "$(shell_quote "$INSTALL_ROOT")" "$(shell_quote "$INSTALL_ROOT/second-codex")"
+  } > "$tmp_entrypoint" || { rm -f "$tmp_entrypoint"; return 73; }
+  chmod 700 "$tmp_entrypoint"
+  mv "$tmp_entrypoint" "$target"
+}
+
+ensure_path_entrypoint
 
 LINE="source $(shell_quote "$INSTALL_ROOT/second-codex-shell.zsh")"
 LEGACY_LINE="source $INSTALL_ROOT/second-codex-shell.zsh"
@@ -132,5 +154,7 @@ ZSHRC="${ZSHRC:-$HOME/.zshrc}"
 ensure_source_line "$ZSHRC"
 
 echo "Installed second-codex to $INSTALL_ROOT"
+echo "Installed PATH entrypoint to $PATH_DIR/second-codex"
 echo "New zsh sessions can now use second-codex from any directory."
+echo "For non-interactive shells, ensure $PATH_DIR is on PATH."
 echo "For this already-open shell, run: source $INSTALL_ROOT/second-codex-shell.zsh"

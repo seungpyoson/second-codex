@@ -6,7 +6,8 @@
 
 - Primary account home: `~/.codex`
 - Second account home: `~/.codex-second`
-- Wrapper: `~/.codex-account-switch/second-codex`
+- Installed wrapper: `~/.codex-account-switch/second-codex`
+- PATH entrypoint: `~/.local/bin/second-codex`
 
 ## Contract
 
@@ -32,7 +33,7 @@ Account/auth operations remain blocked. Run account/auth changes explicitly from
 
 ## Usage
 
-After installation, new zsh sessions load the shell helper automatically from `~/.zshenv`, so `second-codex` is available from any project directory. For an already-open shell, run:
+After installation, `second-codex` is available as a PATH command from `~/.local/bin/second-codex`. New zsh sessions also load the shell helper from `~/.zshrc` for interactive session hints. For an already-open shell, run:
 
 ```bash
 source ~/.codex-account-switch/second-codex-shell.zsh
@@ -46,6 +47,15 @@ second-codex exec "Reply with exactly: second-codex ok"
 ```
 
 The shell helper wraps both `codex` and `second-codex`. After an interactive, prompt, `exec`, or `resume` run exits, it prints the most recent matching session id for the current directory. Setup/status commands such as `login status`, `mcp`, `features`, and `plugin` do not print session hints.
+
+Updates:
+
+```bash
+second-codex update
+second-codex doctor
+```
+
+`install.sh` records the source checkout it was run from. `second-codex update` refreshes the installed wrapper, shell helper, manifest, PATH entrypoint, and marked `.zshrc` block from that recorded source. If the installed wrapper becomes stale, interactive runs warn once for the current source version and continue. `second-codex doctor` reports install freshness, shell-helper block status, and PATH entrypoint status.
 
 Resume directions:
 
