@@ -35,7 +35,7 @@ test -x "$SANDBOX/install \"root/second-codex"
 test -f "$SANDBOX/install \"root/ownership-manifest.txt"
 test "$(cat "$SANDBOX/install \"root/source-root")" = "$REPO_ROOT"
 test -x "$SANDBOX/home/.local/bin/second-codex"
-grep -Fxq "CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second SECOND_CODEX_SWITCH_ROOT='$SANDBOX/install \"root' exec '$SANDBOX/install \"root/second-codex' \"\$@\"" "$SANDBOX/home/.local/bin/second-codex" || {
+grep -Fxq "CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second CODEX_HOME='$SANDBOX/home/.codex-second' SECOND_CODEX_HOME='$SANDBOX/home/.codex-second' SECOND_CODEX_SWITCH_ROOT='$SANDBOX/install \"root' exec '$SANDBOX/install \"root/second-codex' \"\$@\"" "$SANDBOX/home/.local/bin/second-codex" || {
   echo "FAIL PATH entrypoint did not contain the expected second-account wrapper exec"
   cat "$SANDBOX/home/.local/bin/second-codex"
   exit 1
