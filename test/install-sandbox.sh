@@ -66,6 +66,50 @@ if grep -Fq "source '$PRESEEDED_HOME/.codex-account-switch/second-codex-shell.zs
   exit 1
 fi
 
+LEGACY_HOME="$SANDBOX/legacy-home"
+mkdir -p "$LEGACY_HOME"
+printf "source '%s'\n" "$LEGACY_HOME/.codex-account-switch/second-codex-shell.zsh" > "$LEGACY_HOME/.zshrc"
+HOME="$LEGACY_HOME" \
+CODEX_A_HOME="$LEGACY_HOME/.codex" \
+SECOND_CODEX_HOME="$LEGACY_HOME/.codex-second" \
+ZSHRC="$LEGACY_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/legacy-install.out"
+if [ "$(grep -c "second-codex-shell.zsh" "$LEGACY_HOME/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer appended duplicate helper source line to exact legacy source line"
+  cat "$LEGACY_HOME/.zshrc"
+  exit 1
+fi
+if grep -Fxq "# >>> second-codex shell helper >>>" "$LEGACY_HOME/.zshrc"; then
+  echo "FAIL installer rewrote exact legacy source line instead of preserving it"
+  cat "$LEGACY_HOME/.zshrc"
+  exit 1
+fi
+
+MOVED_HOME="$SANDBOX/moved-home"
+mkdir -p "$MOVED_HOME"
+cat > "$MOVED_HOME/.zshrc" <<ZSHRC
+# >>> second-codex shell helper >>>
+source '$MOVED_HOME/old-root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+ZSHRC
+HOME="$MOVED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$MOVED_HOME/new-root" \
+CODEX_A_HOME="$MOVED_HOME/.codex" \
+SECOND_CODEX_HOME="$MOVED_HOME/.codex-second" \
+ZSHRC="$MOVED_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/moved-install.out"
+grep -Fxq "source '$MOVED_HOME/new-root/second-codex-shell.zsh'" "$MOVED_HOME/.zshrc"
+if grep -Fq "$MOVED_HOME/old-root/second-codex-shell.zsh" "$MOVED_HOME/.zshrc"; then
+  echo "FAIL installer left stale helper source path in marked block"
+  cat "$MOVED_HOME/.zshrc"
+  exit 1
+fi
+if [ "$(grep -c "second-codex-shell.zsh" "$MOVED_HOME/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer duplicated helper source line while updating marked block"
+  cat "$MOVED_HOME/.zshrc"
+  exit 1
+fi
+
 MANAGED_HOME="$SANDBOX/managed-home"
 MANAGED_REPO="$SANDBOX/managed-config"
 mkdir -p "$MANAGED_HOME" "$MANAGED_REPO"
@@ -87,6 +131,41 @@ if grep -Fq "second-codex-shell.zsh" "$MANAGED_REPO/zshrc"; then
 fi
 grep -Fq "Refusing to edit symlink-managed shell config" "$SANDBOX/managed-install.out"
 grep -Fq "Add this block to the real config file yourself" "$SANDBOX/managed-install.out"
+
+MANAGED_STALE_HOME="$SANDBOX/managed-stale-home"
+MANAGED_STALE_REPO="$SANDBOX/managed-stale-config"
+mkdir -p "$MANAGED_STALE_HOME" "$MANAGED_STALE_REPO"
+cat > "$MANAGED_STALE_REPO/zshrc" <<'ZSHRC'
+# >>> second-codex shell helper >>>
+source '/old/root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+ZSHRC
+ln -s "$MANAGED_STALE_REPO/zshrc" "$MANAGED_STALE_HOME/.zshrc"
+if HOME="$MANAGED_STALE_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$MANAGED_STALE_HOME/new-root" \
+  CODEX_A_HOME="$MANAGED_STALE_HOME/.codex" \
+  SECOND_CODEX_HOME="$MANAGED_STALE_HOME/.codex-second" \
+  ZSHRC="$MANAGED_STALE_HOME/.zshrc" \
+  "$REPO_ROOT/install.sh" >"$SANDBOX/managed-stale-install.out" 2>&1; then
+  echo "FAIL installer updated stale marked block through symlink-managed .zshrc"
+  cat "$SANDBOX/managed-stale-install.out"
+  exit 1
+fi
+grep -Fq "source '/old/root/second-codex-shell.zsh'" "$MANAGED_STALE_REPO/zshrc"
+grep -Fq "Refusing to edit symlink-managed shell config" "$SANDBOX/managed-stale-install.out"
+
+MISSING_PARENT_HOME="$SANDBOX/missing-parent-home"
+mkdir -p "$MISSING_PARENT_HOME"
+if HOME="$MISSING_PARENT_HOME" \
+  CODEX_A_HOME="$MISSING_PARENT_HOME/.codex" \
+  SECOND_CODEX_HOME="$MISSING_PARENT_HOME/.codex-second" \
+  ZSHRC="$MISSING_PARENT_HOME/.config/zsh/.zshrc" \
+  "$REPO_ROOT/install.sh" >"$SANDBOX/missing-parent-install.out" 2>&1; then
+  echo "FAIL installer created or wrote to a shell config with missing parent directory"
+  cat "$SANDBOX/missing-parent-install.out"
+  exit 1
+fi
+grep -Fq "Refusing to edit shell config because its parent directory does not exist" "$SANDBOX/missing-parent-install.out"
 
 cat > "$SANDBOX/install \"root/second-codex" <<'SH'
 #!/usr/bin/env bash
