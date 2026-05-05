@@ -1718,6 +1718,10 @@ doctor_path_entrypoint() {
   local entrypoint="$PATH_ENTRY_DIR/second-codex"
   local expected_line resolved resolved_path entrypoint_path
   expected_line="SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\""
+  if [[ -f "$entrypoint" && ! -x "$entrypoint" && ! -L "$entrypoint" ]]; then
+    echo "FAIL PATH entrypoint is not executable; run second-codex update"
+    return 1
+  fi
   if [[ -x "$entrypoint" && ! -L "$entrypoint" ]] \
     && awk -v expected="$expected_line" '
       {

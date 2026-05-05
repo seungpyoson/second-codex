@@ -320,11 +320,15 @@ SECOND_CODEX_SWITCH_ROOT="$MALFORMED_HOME/new-root" \
 CODEX_A_HOME="$MALFORMED_HOME/.codex" \
 SECOND_CODEX_HOME="$MALFORMED_HOME/.codex-second" \
 ZSHRC="$MALFORMED_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/malformed-install.out"
+"$REPO_ROOT/install.sh" >"$SANDBOX/malformed-install.out" 2>&1 && {
+  echo "FAIL installer accepted malformed helper block"
+  cat "$SANDBOX/malformed-install.out"
+  exit 1
+}
 grep -Fxq "export KEEP_ME=1" "$MALFORMED_HOME/.zshrc"
-grep -Fxq "source '$MALFORMED_HOME/new-root/second-codex-shell.zsh'" "$MALFORMED_HOME/.zshrc"
-if [ "$(grep -c "# >>> second-codex shell helper >>>" "$MALFORMED_HOME/.zshrc")" -lt 2 ]; then
-  echo "FAIL installer treated malformed helper block as replaceable"
+grep -Fq "Refusing to edit malformed second-codex shell helper block" "$SANDBOX/malformed-install.out"
+if grep -Fxq "source '$MALFORMED_HOME/new-root/second-codex-shell.zsh'" "$MALFORMED_HOME/.zshrc"; then
+  echo "FAIL installer appended a new helper source after a malformed helper block"
   cat "$MALFORMED_HOME/.zshrc"
   exit 1
 fi

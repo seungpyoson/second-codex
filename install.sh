@@ -172,6 +172,9 @@ marked_block_status() {
       if (current && begin_count == 1 && end_count == 1) {
         exit 0
       }
+      if (begin_count != end_count) {
+        exit 3
+      }
       if (begin_count > 0 && end_count > 0) {
         exit 2
       }
@@ -230,6 +233,10 @@ ensure_source_line() {
   fi
   if [ "$block_status" -eq 0 ]; then
     echo "second-codex shell helper already sourced in marked block in $file"
+  elif [ "$block_status" -eq 3 ]; then
+    echo "Refusing to edit malformed second-codex shell helper block in $file" >&2
+    echo "Fix or remove the incomplete marked block, then rerun install." >&2
+    return 73
   elif [ "$block_status" -ne 2 ] && [ -f "$file" ] && { grep -Fxq "$LINE" "$file" || grep -Fxq "$LEGACY_LINE" "$file"; }; then
     echo "second-codex shell helper already sourced in $file"
   elif [ -L "$file" ]; then

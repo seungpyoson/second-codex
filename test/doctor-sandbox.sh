@@ -306,6 +306,22 @@ PATH="$SANDBOX/home/.local/bin:$PATH" \
 "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-entrypoint-whitespace.out"
 grep -q "PASS PATH entrypoint points to install root" "$SANDBOX/doctor-entrypoint-whitespace.out"
 
+chmod 600 "$SANDBOX/home/.local/bin/second-codex"
+if SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$SANDBOX/home-second" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/shim" \
+  ZSHRC="$SANDBOX/home/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$SANDBOX/home/.local/bin" \
+  PATH="$SANDBOX/home/.local/bin:$PATH" \
+  "$REPO_ROOT/second-codex" doctor > "$SANDBOX/doctor-entrypoint-nonexec.out" 2>&1; then
+  echo "FAIL doctor accepted a non-executable PATH entrypoint"
+  cat "$SANDBOX/doctor-entrypoint-nonexec.out"
+  exit 1
+fi
+grep -q "FAIL PATH entrypoint is not executable" "$SANDBOX/doctor-entrypoint-nonexec.out"
+chmod 700 "$SANDBOX/home/.local/bin/second-codex"
+
 ln -s "$SANDBOX/home/.local/bin" "$SANDBOX/path-link"
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
