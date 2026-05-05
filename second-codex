@@ -1723,7 +1723,7 @@ doctor_path_entrypoint() {
     return 1
   fi
   if [[ -L "$entrypoint" ]]; then
-    echo "FAIL PATH entrypoint is a symlink; run second-codex update"
+    echo "FAIL PATH entrypoint is a symlink; remove it, then run second-codex update"
     return 1
   fi
   if [[ -x "$entrypoint" ]] \
