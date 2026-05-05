@@ -32,6 +32,63 @@ chmod 700 "$SANDBOX/install \"root/second-codex"
 SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
   zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/install \"root/second-codex-shell.zsh"
 grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
+env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh"
+
+: > "$SANDBOX/helper.log"
+mkdir -p "$SANDBOX/shell-snapshots"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  zsh -c 'source "$1"; typeset -f -m "__second_codex_*" codex second-codex > "$2"' \
+    _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/shell-snapshots/snapshot.zsh"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; second-codex login status' _ "$SANDBOX/shell-snapshots/snapshot.zsh"
+grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
+
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'cd "$2"; eval "$(cat "$1")"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$REPO_ROOT"; then
+  :
+else
+  echo "FAIL eval-sourced helper exported an invalid helper dir"
+  exit 1
+fi
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'cd "$2"; eval "$(cat "$1")"; second-codex login status' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$REPO_ROOT" >"$SANDBOX/eval-invalid.out" 2>&1; then
+  echo "FAIL eval-sourced helper unexpectedly resolved helper dir"
+  exit 1
+fi
+grep -Fq "source second-codex-shell.zsh from its installed file path" "$SANDBOX/eval-invalid.out"
+
+mkdir -p "$SANDBOX/eval-caller"
+cat > "$SANDBOX/eval-caller/driver.zsh" <<'ZSH'
+eval "$(cat "$1")"
+second-codex login status
+ZSH
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh "$SANDBOX/eval-caller/driver.zsh" "$SANDBOX/install \"root/second-codex-shell.zsh" \
+  >"$SANDBOX/eval-caller.out" 2>&1; then
+  echo "FAIL script-eval-sourced helper unexpectedly resolved helper dir"
+  exit 1
+fi
+grep -Fq "source second-codex-shell.zsh from its installed file path" "$SANDBOX/eval-caller.out"
+
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source /dev/stdin < "$1"; [[ -z ${SECOND_CODEX_SHELL_HELPER_DIR+x} ]]' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh"; then
+  :
+else
+  echo "FAIL stdin-sourced helper exported an invalid helper dir"
+  exit 1
+fi
+if env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source /dev/stdin < "$1"; second-codex login status' \
+  _ "$SANDBOX/install \"root/second-codex-shell.zsh" >"$SANDBOX/stdin-invalid.out" 2>&1; then
+  echo "FAIL stdin-sourced helper unexpectedly resolved helper dir"
+  exit 1
+fi
+grep -Fq "source second-codex-shell.zsh from its installed file path" "$SANDBOX/stdin-invalid.out"
+
+: > "$SANDBOX/helper.log"
+SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/helper.log" \
+  env -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'source "$1"; eval "$(cat "$2")"; second-codex login status' \
+    _ "$SANDBOX/install \"root/second-codex-shell.zsh" "$SANDBOX/install \"root/second-codex-shell.zsh"
+grep -Fxq "installed-helper:login status" "$SANDBOX/helper.log"
 
 mkdir -p "$SANDBOX/bin"
 cat > "$SANDBOX/bin/codex" <<'SH'
@@ -99,8 +156,7 @@ SECOND_CODEX_INSTALL_HELPER_LOG="$SANDBOX/zshenv.log" \
 HOME="$SANDBOX/home" \
 ZDOTDIR="$SANDBOX/home" \
 PATH="$SANDBOX/bin:$PATH" \
-env -u CODEX_ACCOUNT_SLOT -u SECOND_CODEX_ACTIVE_ACCOUNT \
-zsh -c 'codex exec hello'
+  env -u CODEX_ACCOUNT_SLOT -u SECOND_CODEX_ACTIVE_ACCOUNT -u SECOND_CODEX_SHELL_HELPER_DIR zsh -c 'codex exec hello'
 grep -Fxq "primary-codex:exec hello account=missing active=missing" "$SANDBOX/zshenv.log"
 if grep -Fq "installed-helper:_session-hint" "$SANDBOX/zshenv.log"; then
   echo "FAIL non-interactive zsh command printed a session hint"
