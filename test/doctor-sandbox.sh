@@ -66,6 +66,39 @@ PATH="$LEGACY_HOME/.local/bin:$PATH" \
 "$LEGACY_HOME/.local/bin/second-codex" doctor >"$SANDBOX/doctor-legacy.out"
 grep -q "PASS shell helper source points to install root" "$SANDBOX/doctor-legacy.out"
 
+DUP_HOME="$SANDBOX/doctor-duplicate-home"
+DUP_SECOND="$SANDBOX/doctor-duplicate-second"
+mkdir -p "$DUP_HOME" "$DUP_SECOND"
+HOME="$DUP_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$DUP_HOME/new-root" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$DUP_SECOND" \
+ZSHRC="$DUP_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$DUP_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/duplicate-install.out"
+cat > "$DUP_HOME/.zshrc" <<ZSHRC
+# >>> second-codex shell helper >>>
+source '$DUP_HOME/new-root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+# >>> second-codex shell helper >>>
+source '$DUP_HOME/old-root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+ZSHRC
+if HOME="$DUP_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$DUP_HOME/new-root" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$DUP_SECOND" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-duplicate-shim" \
+  ZSHRC="$DUP_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$DUP_HOME/.local/bin" \
+  PATH="$DUP_HOME/.local/bin:$PATH" \
+  "$DUP_HOME/.local/bin/second-codex" doctor >"$SANDBOX/doctor-duplicate.out" 2>&1; then
+  echo "FAIL doctor accepted duplicate shell helper marker blocks"
+  cat "$SANDBOX/doctor-duplicate.out"
+  exit 1
+fi
+grep -q "FAIL shell helper block missing or stale" "$SANDBOX/doctor-duplicate.out"
+
 COMMENTED_HOME="$SANDBOX/doctor-commented-home"
 COMMENTED_SECOND="$SANDBOX/doctor-commented-second"
 mkdir -p "$COMMENTED_HOME" "$COMMENTED_SECOND"
