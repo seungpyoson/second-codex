@@ -196,6 +196,27 @@ if [ "$(grep -c "second-codex-shell.zsh" "$MOVED_HOME/.zshrc")" -ne 1 ]; then
   exit 1
 fi
 
+MALFORMED_HOME="$SANDBOX/malformed-home"
+mkdir -p "$MALFORMED_HOME"
+cat > "$MALFORMED_HOME/.zshrc" <<ZSHRC
+# >>> second-codex shell helper >>>
+source '$MALFORMED_HOME/old-root/second-codex-shell.zsh'
+export KEEP_ME=1
+ZSHRC
+HOME="$MALFORMED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$MALFORMED_HOME/new-root" \
+CODEX_A_HOME="$MALFORMED_HOME/.codex" \
+SECOND_CODEX_HOME="$MALFORMED_HOME/.codex-second" \
+ZSHRC="$MALFORMED_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/malformed-install.out"
+grep -Fxq "export KEEP_ME=1" "$MALFORMED_HOME/.zshrc"
+grep -Fxq "source '$MALFORMED_HOME/new-root/second-codex-shell.zsh'" "$MALFORMED_HOME/.zshrc"
+if [ "$(grep -c "# >>> second-codex shell helper >>>" "$MALFORMED_HOME/.zshrc")" -lt 2 ]; then
+  echo "FAIL installer treated malformed helper block as replaceable"
+  cat "$MALFORMED_HOME/.zshrc"
+  exit 1
+fi
+
 MANAGED_HOME="$SANDBOX/managed-home"
 MANAGED_REPO="$SANDBOX/managed-config"
 mkdir -p "$MANAGED_HOME" "$MANAGED_REPO"

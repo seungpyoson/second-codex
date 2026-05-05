@@ -74,6 +74,35 @@ if grep -q "Add this block to the real config file yourself" "$SANDBOX/doctor-ma
   exit 1
 fi
 
+MALFORMED_HOME="$SANDBOX/doctor-malformed-home"
+MALFORMED_SECOND="$SANDBOX/doctor-malformed-second"
+mkdir -p "$MALFORMED_HOME" "$MALFORMED_SECOND"
+HOME="$MALFORMED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$MALFORMED_HOME/.codex-account-switch" \
+CODEX_A_HOME="$SANDBOX/home-a" \
+SECOND_CODEX_HOME="$MALFORMED_SECOND" \
+ZSHRC="$MALFORMED_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$MALFORMED_HOME/.local/bin" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/malformed-install.out"
+cat > "$MALFORMED_HOME/.zshrc" <<'ZSHRC'
+# >>> second-codex shell helper >>>
+source '$HOME/.codex-account-switch/second-codex-shell.zsh'
+ZSHRC
+if HOME="$MALFORMED_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$MALFORMED_HOME/.codex-account-switch" \
+  CODEX_A_HOME="$SANDBOX/home-a" \
+  SECOND_CODEX_HOME="$MALFORMED_SECOND" \
+  SECOND_CODEX_SHIM_DIR="$SANDBOX/doctor-malformed-shim" \
+  ZSHRC="$MALFORMED_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$MALFORMED_HOME/.local/bin" \
+  PATH="$MALFORMED_HOME/.local/bin:$PATH" \
+  "$MALFORMED_HOME/.local/bin/second-codex" doctor >"$SANDBOX/doctor-malformed.out" 2>&1; then
+  echo "FAIL doctor accepted malformed shell helper block"
+  cat "$SANDBOX/doctor-malformed.out"
+  exit 1
+fi
+grep -q "FAIL shell helper block missing or stale" "$SANDBOX/doctor-malformed.out"
+
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/root" \
 CODEX_A_HOME="$SANDBOX/home-a" \

@@ -1667,10 +1667,10 @@ doctor_shell_helper_block() {
     -v legacy="source $ROOT/second-codex-shell.zsh" \
     -v default_home_line='$HOME/.codex-account-switch/second-codex-shell.zsh' \
     -v default_home_ok="$default_home_ok" '
-    $0 == begin { in_block = 1; next }
-    $0 == end { in_block = 0; next }
+    $0 == begin { in_block = 1; saw_begin = 1; next }
+    $0 == end { in_block = 0; saw_end = 1; next }
     in_block && ($0 == line || $0 == legacy || (default_home_ok && index($0, default_home_line))) { current = 1 }
-    END { exit(current ? 0 : 1) }
+    END { exit(current && saw_begin && saw_end ? 0 : 1) }
   ' "$zshrc"; then
     echo "PASS shell helper block points to install root"
     return 0
