@@ -646,7 +646,11 @@ account_status() {
   local slot
   slot="$(infer_account_slot)"
   local home
-  home="${CODEX_HOME:-$(home_for_account_slot "$slot")}"
+  if [[ "$slot" == "unknown" ]]; then
+    home="${CODEX_HOME:-}"
+  else
+    home="$(home_for_account_slot "$slot")"
+  fi
   printf 'account_slot=%s\n' "$slot"
   printf 'codex_home=%s\n' "${home:-unset}"
 }
@@ -1717,12 +1721,16 @@ doctor_shell_helper_block() {
 doctor_path_entrypoint() {
   local entrypoint="$PATH_ENTRY_DIR/second-codex"
   local expected_line resolved resolved_path entrypoint_path
-  expected_line="SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\""
+  expected_line="CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second SECOND_CODEX_SWITCH_ROOT=$(shell_quote "$ROOT") exec $(shell_quote "$ROOT/second-codex") \"\$@\""
   if [[ -f "$entrypoint" && ! -x "$entrypoint" && ! -L "$entrypoint" ]]; then
     echo "FAIL PATH entrypoint is not executable; run second-codex update"
     return 1
   fi
-  if [[ -x "$entrypoint" && ! -L "$entrypoint" ]] \
+  if [[ -L "$entrypoint" ]]; then
+    echo "FAIL PATH entrypoint is a symlink; run second-codex update"
+    return 1
+  fi
+  if [[ -x "$entrypoint" ]] \
     && awk -v expected="$expected_line" '
       {
         line = $0

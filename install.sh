@@ -137,7 +137,7 @@ ensure_path_entrypoint() {
   tmp_entrypoint="$(umask 077; mktemp "$PATH_DIR/second-codex.XXXXXX")" || return $?
   {
     printf '%s\n' '#!/usr/bin/env bash'
-    printf 'SECOND_CODEX_SWITCH_ROOT=%s exec %s "$@"\n' "$(shell_quote "$INSTALL_ROOT")" "$(shell_quote "$INSTALL_ROOT/second-codex")"
+    printf 'CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second SECOND_CODEX_SWITCH_ROOT=%s exec %s "$@"\n' "$(shell_quote "$INSTALL_ROOT")" "$(shell_quote "$INSTALL_ROOT/second-codex")"
   } > "$tmp_entrypoint" || { rm -f "$tmp_entrypoint"; return 73; }
   if ! chmod 700 "$tmp_entrypoint"; then
     rm -f "$tmp_entrypoint"
@@ -201,11 +201,11 @@ replace_marked_block() {
         print end
         replaced = 1
       }
-      in_block = 1
+      block_depth += 1
       next
     }
-    in_block && $0 == end { in_block = 0; next }
-    in_block { next }
+    block_depth && $0 == end { block_depth -= 1; next }
+    block_depth { next }
     { print }
     END { if (!replaced) exit 1 }
   ' "$file" > "$tmp_file"; then

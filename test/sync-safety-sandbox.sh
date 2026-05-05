@@ -75,7 +75,11 @@ assert_sparse_manifest_refused() {
     cat "$out" >&2
     exit 1
   fi
-  grep -q "ownership manifest did not define required pattern groups" "$out"
+  grep -q "ownership manifest did not define required pattern groups" "$out" || {
+    echo "FAIL sparse manifest $name did not print the validation error" >&2
+    cat "$out" >&2
+    exit 1
+  }
   if grep -q "unbound variable" "$out"; then
     echo "FAIL sparse manifest $name crashed with bash nounset before validation" >&2
     cat "$out" >&2

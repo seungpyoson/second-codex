@@ -175,10 +175,17 @@ The doctor checks account homes, unknown top-level entries, shared memory symlin
 
 ## Rollback
 
-Remove the shell helper line from `~/.zshenv` and `~/.zshrc`, then remove the second-account files if no longer needed:
+Remove the marked shell-helper block from `~/.zshrc`, then remove the PATH entrypoint and installed files if no longer needed:
+
+```zsh
+# >>> second-codex shell helper >>>
+source "$HOME/.codex-account-switch/second-codex-shell.zsh"
+# <<< second-codex shell helper <<<
+```
 
 ```bash
-rm -f ~/.codex-account-switch/second-codex
+rm -f ~/.local/bin/second-codex
+rm -rf ~/.codex-account-switch
 rm -rf ~/.codex-second
 ```
 

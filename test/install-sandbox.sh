@@ -35,7 +35,11 @@ test -x "$SANDBOX/install \"root/second-codex"
 test -f "$SANDBOX/install \"root/ownership-manifest.txt"
 test "$(cat "$SANDBOX/install \"root/source-root")" = "$REPO_ROOT"
 test -x "$SANDBOX/home/.local/bin/second-codex"
-grep -Fxq "SECOND_CODEX_SWITCH_ROOT='$SANDBOX/install \"root' exec '$SANDBOX/install \"root/second-codex' \"\$@\"" "$SANDBOX/home/.local/bin/second-codex"
+grep -Fxq "CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second SECOND_CODEX_SWITCH_ROOT='$SANDBOX/install \"root' exec '$SANDBOX/install \"root/second-codex' \"\$@\"" "$SANDBOX/home/.local/bin/second-codex" || {
+  echo "FAIL PATH entrypoint did not contain the expected second-account wrapper exec"
+  cat "$SANDBOX/home/.local/bin/second-codex"
+  exit 1
+}
 test -L "$SANDBOX/home/.codex-second/memories"
 test -L "$SANDBOX/home/.codex-second/memories_extensions"
 test "$(readlink "$SANDBOX/home/.codex-second/memories")" = "$SANDBOX/home/.codex/memories"
@@ -65,9 +69,20 @@ if [[ -e "$SANDBOX/home/.zshenv" ]] && grep -Fq "second-codex-shell.zsh" "$SANDB
 fi
 
 HOME="$SANDBOX/home" \
+CODEX_A_HOME="$SANDBOX/home/.codex" \
+SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 SECOND_CODEX_SWITCH_REAL_CODEX="$SANDBOX/mock-unused-codex" \
   "$SANDBOX/home/.local/bin/second-codex" account >"$SANDBOX/path-entrypoint.out"
-grep -Fq "account_slot=second" "$SANDBOX/path-entrypoint.out"
+grep -Fq "account_slot=second" "$SANDBOX/path-entrypoint.out" || {
+  echo "FAIL PATH entrypoint did not establish second account context"
+  cat "$SANDBOX/path-entrypoint.out"
+  exit 1
+}
+grep -Fq "codex_home=$SANDBOX/home/.codex-second" "$SANDBOX/path-entrypoint.out" || {
+  echo "FAIL PATH entrypoint did not infer second CODEX_HOME"
+  cat "$SANDBOX/path-entrypoint.out"
+  exit 1
+}
 
 printf '\n# stale-installed-copy\n' >> "$SANDBOX/install \"root/second-codex"
 HOME="$SANDBOX/home" \
@@ -307,6 +322,31 @@ if [ "$(grep -c "second-codex-shell.zsh" "$CURRENT_DUP_HOME/.zshrc")" -ne 1 ]; t
   exit 1
 fi
 grep -Fxq "source '$CURRENT_DUP_HOME/new-root/second-codex-shell.zsh'" "$CURRENT_DUP_HOME/.zshrc"
+
+NESTED_DUP_HOME="$SANDBOX/nested-duplicate-block-home"
+mkdir -p "$NESTED_DUP_HOME"
+cat > "$NESTED_DUP_HOME/.zshrc" <<ZSHRC
+# >>> second-codex shell helper >>>
+# >>> second-codex shell helper >>>
+source '$NESTED_DUP_HOME/old-root/second-codex-shell.zsh'
+# <<< second-codex shell helper <<<
+# <<< second-codex shell helper <<<
+export KEEP_NESTED_DUP=1
+ZSHRC
+HOME="$NESTED_DUP_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$NESTED_DUP_HOME/new-root" \
+CODEX_A_HOME="$NESTED_DUP_HOME/.codex" \
+SECOND_CODEX_HOME="$NESTED_DUP_HOME/.codex-second" \
+ZSHRC="$NESTED_DUP_HOME/.zshrc" \
+"$REPO_ROOT/install.sh" >"$SANDBOX/nested-duplicate-block-install.out"
+grep -Fxq "export KEEP_NESTED_DUP=1" "$NESTED_DUP_HOME/.zshrc"
+if [ "$(grep -c "# >>> second-codex shell helper >>>" "$NESTED_DUP_HOME/.zshrc")" -ne 1 ] \
+  || [ "$(grep -c "# <<< second-codex shell helper <<<" "$NESTED_DUP_HOME/.zshrc")" -ne 1 ]; then
+  echo "FAIL installer leaked nested duplicate helper markers"
+  cat "$NESTED_DUP_HOME/.zshrc"
+  exit 1
+fi
+grep -Fxq "source '$NESTED_DUP_HOME/new-root/second-codex-shell.zsh'" "$NESTED_DUP_HOME/.zshrc"
 
 MALFORMED_HOME="$SANDBOX/malformed-home"
 mkdir -p "$MALFORMED_HOME"

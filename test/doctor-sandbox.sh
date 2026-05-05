@@ -292,7 +292,7 @@ if grep -q "^FAIL " "$SANDBOX/doctor.out"; then
   exit 1
 fi
 
-awk '{ if ($0 ~ /^SECOND_CODEX_SWITCH_ROOT=/) { print "  " $0 "  " } else { print } }' \
+awk '{ if ($0 ~ /^CODEX_ACCOUNT_SLOT=second /) { print "  " $0 "  " } else { print } }' \
   "$SANDBOX/home/.local/bin/second-codex" > "$SANDBOX/path-entrypoint-spaced"
 mv "$SANDBOX/path-entrypoint-spaced" "$SANDBOX/home/.local/bin/second-codex"
 chmod 700 "$SANDBOX/home/.local/bin/second-codex"
