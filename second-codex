@@ -221,7 +221,7 @@ fail_on_unknown_entries() {
   {
     echo "second-codex refused to sync because $label CODEX_HOME has unknown top-level entries:"
     printf '%s\n' "$unknown" | sed 's/^/  - /'
-    echo "Classify these in ownership-manifest.txt before syncing."
+    echo "Classify these in the active ownership manifest before syncing, or set SECOND_CODEX_MANIFEST to a custom manifest path."
   } >&2
   return 65
 }

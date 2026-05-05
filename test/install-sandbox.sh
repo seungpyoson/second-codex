@@ -89,6 +89,46 @@ SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 "$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update-after-stale.out"
 
+printf '\n# local manifest customization\ncustom-local-entry\n' >> "$SANDBOX/install \"root/ownership-manifest.txt"
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
+CODEX_A_HOME="$SANDBOX/home/.codex" \
+SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+"$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update-after-manifest-custom.out"
+if grep -Fq "custom-local-entry" "$SANDBOX/install \"root/ownership-manifest.txt"; then
+  echo "FAIL update left local manifest customization in bundled manifest"
+  exit 1
+fi
+manifest_backup="$(find "$SANDBOX/install \"root" -name 'ownership-manifest.txt.local-backup-*' -print -quit)"
+if [[ -z "$manifest_backup" ]]; then
+  echo "FAIL update did not preserve customized installed ownership manifest"
+  exit 1
+fi
+grep -Fq "custom-local-entry" "$manifest_backup"
+
+SHRINK_SOURCE="$SANDBOX/shrink-source"
+mkdir -p "$SHRINK_SOURCE/lib"
+cp "$REPO_ROOT/install.sh" "$SHRINK_SOURCE/install.sh"
+cp "$REPO_ROOT/second-codex-shell.zsh" "$SHRINK_SOURCE/second-codex-shell.zsh"
+cp "$REPO_ROOT/ownership-manifest.txt" "$SHRINK_SOURCE/ownership-manifest.txt"
+cp "$REPO_ROOT/README.md" "$SHRINK_SOURCE/README.md"
+cp "$REPO_ROOT/lib/session_convert.py" "$SHRINK_SOURCE/lib/session_convert.py"
+cat > "$SHRINK_SOURCE/second-codex" <<'WRAPPER'
+#!/usr/bin/env bash
+echo shrink-wrapper "$@"
+WRAPPER
+chmod +x "$SHRINK_SOURCE/install.sh" "$SHRINK_SOURCE/second-codex"
+printf '%s\n' "$SHRINK_SOURCE" > "$SANDBOX/install \"root/source-root"
+HOME="$SANDBOX/home" \
+SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
+CODEX_A_HOME="$SANDBOX/home/.codex" \
+SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
+ZSHRC="$SANDBOX/home/.zshrc" \
+"$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update-shrink.out"
+grep -Fq "Updated second-codex install from $SHRINK_SOURCE" "$SANDBOX/update-shrink.out"
+grep -Fq 'echo shrink-wrapper "$@"' "$SANDBOX/install \"root/second-codex"
+
 PRESEEDED_HOME="$SANDBOX/preseed-home"
 mkdir -p "$PRESEEDED_HOME"
 cat > "$PRESEEDED_HOME/.zshrc" <<'ZSHRC'

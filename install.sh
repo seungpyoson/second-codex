@@ -12,13 +12,50 @@ shell_quote() {
   printf "'%s'" "$value"
 }
 
+install_file() {
+  local src="$1"
+  local dest="$2"
+  local parent base tmp mode
+  parent="$(dirname "$dest")"
+  base="$(basename "$dest")"
+  mkdir -p "$parent"
+  mode="$(stat -f '%Lp' "$src" 2>/dev/null || stat -c '%a' "$src")" || return $?
+  tmp="$(umask 077; mktemp "$parent/.${base}.second-codex.XXXXXX")" || return $?
+  if ! cp "$src" "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! mv "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 73
+  fi
+}
+
+install_manifest() {
+  local src="$1"
+  local dest="$2"
+  local backup
+  if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
+    backup="$dest.local-backup-$(date +%Y%m%d%H%M%S)"
+    if [[ -e "$backup" ]]; then
+      backup="$backup.$$"
+    fi
+    install_file "$dest" "$backup" || return $?
+  fi
+  install_file "$src" "$dest"
+}
+
 mkdir -p "$INSTALL_ROOT"
-cp "$SOURCE_ROOT/second-codex" "$INSTALL_ROOT/second-codex"
-cp "$SOURCE_ROOT/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
-cp "$SOURCE_ROOT/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
-cp "$SOURCE_ROOT/README.md" "$INSTALL_ROOT/README.md"
+install_file "$SOURCE_ROOT/second-codex" "$INSTALL_ROOT/second-codex"
+install_file "$SOURCE_ROOT/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
+install_manifest "$SOURCE_ROOT/ownership-manifest.txt" "$INSTALL_ROOT/ownership-manifest.txt"
+install_file "$SOURCE_ROOT/README.md" "$INSTALL_ROOT/README.md"
 mkdir -p "$INSTALL_ROOT/lib"
-cp "$SOURCE_ROOT/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
+install_file "$SOURCE_ROOT/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
 chmod +x "$INSTALL_ROOT/second-codex"
 printf '%s\n' "$SOURCE_ROOT" > "$INSTALL_ROOT/source-root"
 

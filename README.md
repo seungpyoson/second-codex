@@ -160,7 +160,7 @@ The Claude `~/.claude/projects/<encoded-cwd>/` encoding rule was reverse-enginee
 - GitHub connector writes use the GitHub connector installation; avoid destructive GitHub actions unless explicitly intended.
 - Safe setup/config commands are rerouted to primary `~/.codex`; account/auth commands are blocked.
 - The subprocess shim is generated under a user-specific temp path such as `/tmp/second-codex-shim-501` with owner checks and restrictive permissions.
-- `ownership-manifest.txt` is the source of truth for account/runtime and environment ownership. Sync fails closed when either account home has unknown top-level entries.
+- `ownership-manifest.txt` is the default source of truth for account/runtime and environment ownership. Sync fails closed when either account home has unknown top-level entries. Use `SECOND_CODEX_MANIFEST` for local custom classification; `second-codex update` refreshes the bundled manifest and backs up a locally edited installed manifest before replacing it.
 - After Codex upgrades, run `second-codex doctor` to detect new top-level Codex state that needs classification.
 
 ## Doctor
