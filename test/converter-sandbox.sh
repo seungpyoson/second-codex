@@ -1271,6 +1271,42 @@ print("empty call_id always orphans (no false linkage) PASSED")
 EOF
 
 # ---------------------------------------------------------------------------
+# DE (DeepSeek P2): mapped function_call with empty call_id follows the same
+# malformed-source contract as custom_tool_call: empty IDs are never valid
+# linkage keys. The call folds to text instead of creating an unmatched
+# Claude tool_use, and the output is explicitly orphan-marked.
+# ---------------------------------------------------------------------------
+TDE_UUID="00000000-0000-7000-8000-000000000034"
+TDE_PATH="$CODEX_HOME/sessions/2026/05/04/rollout-2026-05-04T00-20-01-$TDE_UUID.jsonl"
+cat > "$TDE_PATH" <<EOF
+{"timestamp":"2026-05-04T00:00:00.000Z","type":"session_meta","payload":{"id":"$TDE_UUID","timestamp":"2026-05-04T00:00:00.000Z","cwd":"$CWD","originator":"test","cli_version":"0","source":"cli","model_provider":"openai","base_instructions":{"text":"You are Codex.\n"}}}
+{"timestamp":"2026-05-04T00:00:01.000Z","type":"turn_context","payload":{"cwd":"$CWD","approval_policy":"never","sandbox_policy":{"type":"read-only"},"model":"gpt-5.5","effort":"none","summary":"none"}}
+{"timestamp":"2026-05-04T00:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"empty mapped id corruption","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-04T00:00:03.000Z","type":"response_item","payload":{"type":"function_call","call_id":"","name":"exec_command","arguments":"{\"cmd\":\"EMPTYID-MAPPED-CALL-MARKER-TAMARIND\"}"}}
+{"timestamp":"2026-05-04T00:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"","output":"EMPTYID-MAPPED-OUTPUT-MARKER-SAFFRON"}}
+EOF
+
+OUT="$SANDBOX/empty-mapped-id.out"
+CODEX_HOME="$CODEX_HOME" CLAUDE_HOME="$CLAUDE_HOME" \
+  python3 "$REPO_ROOT/lib/session_convert.py" codex-to-claude "$TDE_UUID" >"$OUT" 2>&1
+TDE_NEW_UUID="$(grep '^new session UUID:' "$OUT" | awk '{print $NF}')"
+TDE_NEW_PATH="$CLAUDE_HOME/projects/$ENCODED_CWD/$TDE_NEW_UUID.jsonl"
+
+python3 - <<EOF
+import json
+records = [json.loads(l) for l in open("$TDE_NEW_PATH") if l.strip()]
+texts = [b.get("text", "") for r in records for b in r.get("message", {}).get("content", []) if isinstance(b, dict)]
+joined = "".join(texts)
+assert "EMPTYID-MAPPED-CALL-MARKER-TAMARIND" in joined, f"empty mapped-id call input lost; got {texts!r}"
+assert "EMPTYID-MAPPED-OUTPUT-MARKER-SAFFRON" in joined, f"empty mapped-id output lost; got {texts!r}"
+assert joined.count("[Orphan tool result:") == 1, f"empty mapped-id output should orphan-flag; got {texts!r}"
+for r in records:
+    for block in r.get("message", {}).get("content", []):
+        assert block.get("type") != "tool_use", f"empty mapped-id call should not emit Claude tool_use: {records!r}"
+print("empty mapped function_call id folds and orphans PASSED")
+EOF
+
+# ---------------------------------------------------------------------------
 # EE (review #8 GLM BUG): Claude user records with `content` as a plain string
 # (~17% of real local user records, 2026-05-04 corpus scan) must survive
 # claude-to-codex conversion. Pre-fix: the input loop's

@@ -755,7 +755,7 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 args = json.loads(args_str) if isinstance(args_str, str) else args_str
             except json.JSONDecodeError:
                 args = {"raw_arguments": args_str}
-            if tool_name_codex in CODEX_TO_CLAUDE_TOOL:
+            if tool_name_codex in CODEX_TO_CLAUDE_TOOL and call_id:
                 tool_name_claude = CODEX_TO_CLAUDE_TOOL[tool_name_codex]
                 tool_use_id = gen_claude_tool_id()
                 call_id_to_tool_id[call_id] = tool_use_id
@@ -780,7 +780,10 @@ def codex_to_claude(src: Path, target_cwd: str | None = None) -> tuple[Path, str
                 # Claude API may reject unknown tool names; rendering as text
                 # preserves the narrative without depending on tool schema.
                 # Skip empty call_id when tracking (parallel guard to
-                # custom_tool_call_ids — empty isn't a real linkage key).
+                # custom_tool_call_ids — empty isn't a real linkage key). A
+                # mapped tool with an empty call_id also lands here so it does
+                # not create an unmatched Claude tool_use or falsely pair with
+                # an empty-id output.
                 if call_id:
                     unknown_call_ids.add(call_id)
                 preview = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
