@@ -38,13 +38,21 @@ install_file() {
 install_manifest() {
   local src="$1"
   local dest="$2"
-  local backup
+  local backup mode
   if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
-    backup="$dest.local-backup-$(date +%Y%m%d%H%M%S)"
-    if [[ -e "$backup" ]]; then
-      backup="$backup.$$"
+    backup="$(umask 077; mktemp "$dest.local-backup-XXXXXX")" || return $?
+    mode="$(stat -f '%Lp' "$dest" 2>/dev/null || stat -c '%a' "$dest")" || {
+      rm -f "$backup"
+      return 73
+    }
+    if ! cp "$dest" "$backup"; then
+      rm -f "$backup"
+      return 73
     fi
-    install_file "$dest" "$backup" || return $?
+    if ! chmod "$mode" "$backup"; then
+      rm -f "$backup"
+      return 73
+    fi
   fi
   install_file "$src" "$dest"
 }

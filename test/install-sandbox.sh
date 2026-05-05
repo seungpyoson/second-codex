@@ -95,11 +95,19 @@ ZSHRC="$SANDBOX/home/.zshrc" \
 "$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update-after-stale.out"
 
 printf '\n# local manifest customization\ncustom-local-entry\n' >> "$SANDBOX/install \"root/ownership-manifest.txt"
+FAKE_DATE_BIN="$SANDBOX/fake-date-bin"
+mkdir -p "$FAKE_DATE_BIN"
+cat > "$FAKE_DATE_BIN/date" <<'SH'
+#!/usr/bin/env bash
+exit 99
+SH
+chmod +x "$FAKE_DATE_BIN/date"
 HOME="$SANDBOX/home" \
 SECOND_CODEX_SWITCH_ROOT="$SANDBOX/install \"root" \
 CODEX_A_HOME="$SANDBOX/home/.codex" \
 SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
+PATH="$FAKE_DATE_BIN:$PATH" \
 "$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update-after-manifest-custom.out"
 if grep -Fq "custom-local-entry" "$SANDBOX/install \"root/ownership-manifest.txt"; then
   echo "FAIL update left local manifest customization in bundled manifest"
