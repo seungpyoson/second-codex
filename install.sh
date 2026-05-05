@@ -49,6 +49,28 @@ install_manifest() {
   install_file "$src" "$dest"
 }
 
+write_text_file_atomic() {
+  local dest="$1"
+  local content="$2"
+  local parent base tmp
+  parent="$(dirname "$dest")"
+  base="$(basename "$dest")"
+  mkdir -p "$parent"
+  tmp="$(umask 077; mktemp "$parent/.${base}.second-codex.XXXXXX")" || return $?
+  if ! printf '%s\n' "$content" > "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! chmod 600 "$tmp"; then
+    rm -f "$tmp"
+    return 73
+  fi
+  if ! mv "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 73
+  fi
+}
+
 mkdir -p "$INSTALL_ROOT"
 install_file "$SOURCE_ROOT/second-codex" "$INSTALL_ROOT/second-codex"
 install_file "$SOURCE_ROOT/second-codex-shell.zsh" "$INSTALL_ROOT/second-codex-shell.zsh"
@@ -57,7 +79,7 @@ install_file "$SOURCE_ROOT/README.md" "$INSTALL_ROOT/README.md"
 mkdir -p "$INSTALL_ROOT/lib"
 install_file "$SOURCE_ROOT/lib/session_convert.py" "$INSTALL_ROOT/lib/session_convert.py"
 chmod +x "$INSTALL_ROOT/second-codex"
-printf '%s\n' "$SOURCE_ROOT" > "$INSTALL_ROOT/source-root"
+write_text_file_atomic "$INSTALL_ROOT/source-root" "$SOURCE_ROOT"
 
 link_shared_path() {
   local name="$1"
@@ -91,8 +113,14 @@ ensure_path_entrypoint() {
     printf '%s\n' '#!/usr/bin/env bash'
     printf 'SECOND_CODEX_SWITCH_ROOT=%s exec %s "$@"\n' "$(shell_quote "$INSTALL_ROOT")" "$(shell_quote "$INSTALL_ROOT/second-codex")"
   } > "$tmp_entrypoint" || { rm -f "$tmp_entrypoint"; return 73; }
-  chmod 700 "$tmp_entrypoint"
-  mv "$tmp_entrypoint" "$target"
+  if ! chmod 700 "$tmp_entrypoint"; then
+    rm -f "$tmp_entrypoint"
+    return 73
+  fi
+  if ! mv "$tmp_entrypoint" "$target"; then
+    rm -f "$tmp_entrypoint"
+    return 73
+  fi
 }
 
 ensure_path_entrypoint
