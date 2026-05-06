@@ -4,6 +4,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/second-codex-install-sandbox.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
+TEST_GIT_EMAIL="second-codex-test@example.invalid"
+TEST_GIT_NAME="second-codex test"
+PULL_FF_ONLY="git pull --ff-only"
+mkdir -p "$SANDBOX/test-source/lib"
+TEST_SOURCE="$(cd "$SANDBOX/test-source" && pwd)"
+cp "$REPO_ROOT/install.sh" "$REPO_ROOT/second-codex" "$REPO_ROOT/second-codex-shell.zsh" "$REPO_ROOT/ownership-manifest.txt" "$REPO_ROOT/README.md" "$TEST_SOURCE/"
+cp "$REPO_ROOT/lib/session_convert.py" "$TEST_SOURCE/lib/session_convert.py"
 
 SAME_HOME="$SANDBOX/same-home"
 mkdir -p "$SAME_HOME"
@@ -12,7 +19,7 @@ if HOME="$SAME_HOME" \
   CODEX_A_HOME="$SAME_HOME/codex" \
   SECOND_CODEX_HOME="$SAME_HOME/codex/" \
   ZSHRC="$SAME_HOME/.zshrc" \
-  "$REPO_ROOT/install.sh" >"$SANDBOX/same-home-install.out" 2>&1; then
+  "$TEST_SOURCE/install.sh" >"$SANDBOX/same-home-install.out" 2>&1; then
   echo "FAIL installer allowed primary and second CODEX_HOME to be the same"
   cat "$SANDBOX/same-home-install.out"
   exit 1
@@ -29,21 +36,21 @@ CODEX_A_HOME="$SANDBOX/home/.codex" \
 SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 ZSHENV="$SANDBOX/home/.zshenv" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/install.out"
 
-test -x "$SANDBOX/install \"root/second-codex"
-test -f "$SANDBOX/install \"root/ownership-manifest.txt"
-test "$(cat "$SANDBOX/install \"root/source-root")" = "$REPO_ROOT"
-test -x "$SANDBOX/home/.local/bin/second-codex"
+[[ -x "$SANDBOX/install \"root/second-codex" ]]
+[[ -f "$SANDBOX/install \"root/ownership-manifest.txt" ]]
+[[ "$(cat "$SANDBOX/install \"root/source-root")" == "$TEST_SOURCE" ]]
+[[ -x "$SANDBOX/home/.local/bin/second-codex" ]]
 grep -Fxq "CODEX_ACCOUNT_SLOT=second SECOND_CODEX_ACTIVE_ACCOUNT=second CODEX_HOME='$SANDBOX/home/.codex-second' SECOND_CODEX_HOME='$SANDBOX/home/.codex-second' SECOND_CODEX_SWITCH_ROOT='$SANDBOX/install \"root' exec '$SANDBOX/install \"root/second-codex' \"\$@\"" "$SANDBOX/home/.local/bin/second-codex" || {
   echo "FAIL PATH entrypoint did not contain the expected second-account wrapper exec"
   cat "$SANDBOX/home/.local/bin/second-codex"
   exit 1
 }
-test -L "$SANDBOX/home/.codex-second/memories"
-test -L "$SANDBOX/home/.codex-second/memories_extensions"
-test "$(readlink "$SANDBOX/home/.codex-second/memories")" = "$SANDBOX/home/.codex/memories"
-test "$(readlink "$SANDBOX/home/.codex-second/memories_extensions")" = "$SANDBOX/home/.codex/memories_extensions"
+[[ -L "$SANDBOX/home/.codex-second/memories" ]]
+[[ -L "$SANDBOX/home/.codex-second/memories_extensions" ]]
+[[ "$(readlink "$SANDBOX/home/.codex-second/memories")" == "$SANDBOX/home/.codex/memories" ]]
+[[ "$(readlink "$SANDBOX/home/.codex-second/memories_extensions")" == "$SANDBOX/home/.codex/memories_extensions" ]]
 grep -Fxq "# >>> second-codex shell helper >>>" "$SANDBOX/home/.zshrc"
 grep -Fxq "# <<< second-codex shell helper <<<" "$SANDBOX/home/.zshrc"
 if [ "$(grep -c "second-codex-shell.zsh" "$SANDBOX/home/.zshrc")" -ne 1 ]; then
@@ -57,7 +64,7 @@ CODEX_A_HOME="$SANDBOX/home/.codex" \
 SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 ZSHENV="$SANDBOX/home/.zshenv" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/install-rerun.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/install-rerun.out"
 if [ "$(grep -c "second-codex-shell.zsh" "$SANDBOX/home/.zshrc")" -ne 1 ]; then
   echo "FAIL installer appended duplicate helper source line on rerun"
   cat "$SANDBOX/home/.zshrc"
@@ -91,7 +98,7 @@ CODEX_A_HOME="$SANDBOX/home/.codex" \
 SECOND_CODEX_HOME="$SANDBOX/home/.codex-second" \
 ZSHRC="$SANDBOX/home/.zshrc" \
 "$SANDBOX/home/.local/bin/second-codex" update >"$SANDBOX/update.out"
-grep -Fq "Updated second-codex install from $REPO_ROOT" "$SANDBOX/update.out"
+grep -Fq "Updated second-codex install from $TEST_SOURCE" "$SANDBOX/update.out"
 if grep -Fq "# stale-installed-copy" "$SANDBOX/install \"root/second-codex"; then
   echo "FAIL second-codex update did not refresh installed wrapper from recorded source"
   exit 1
@@ -155,11 +162,11 @@ grep -Fq "custom-local-entry" "$manifest_backup"
 
 SHRINK_SOURCE="$SANDBOX/shrink-source"
 mkdir -p "$SHRINK_SOURCE/lib"
-cp "$REPO_ROOT/install.sh" "$SHRINK_SOURCE/install.sh"
-cp "$REPO_ROOT/second-codex-shell.zsh" "$SHRINK_SOURCE/second-codex-shell.zsh"
-cp "$REPO_ROOT/ownership-manifest.txt" "$SHRINK_SOURCE/ownership-manifest.txt"
-cp "$REPO_ROOT/README.md" "$SHRINK_SOURCE/README.md"
-cp "$REPO_ROOT/lib/session_convert.py" "$SHRINK_SOURCE/lib/session_convert.py"
+cp "$TEST_SOURCE/install.sh" "$SHRINK_SOURCE/install.sh"
+cp "$TEST_SOURCE/second-codex-shell.zsh" "$SHRINK_SOURCE/second-codex-shell.zsh"
+cp "$TEST_SOURCE/ownership-manifest.txt" "$SHRINK_SOURCE/ownership-manifest.txt"
+cp "$TEST_SOURCE/README.md" "$SHRINK_SOURCE/README.md"
+cp "$TEST_SOURCE/lib/session_convert.py" "$SHRINK_SOURCE/lib/session_convert.py"
 cat > "$SHRINK_SOURCE/second-codex" <<'WRAPPER'
 #!/usr/bin/env bash
 echo shrink-wrapper "$@"
@@ -175,6 +182,324 @@ ZSHRC="$SANDBOX/home/.zshrc" \
 grep -Fq "Updated second-codex install from $SHRINK_SOURCE" "$SANDBOX/update-shrink.out"
 grep -Fq 'echo shrink-wrapper "$@"' "$SANDBOX/install \"root/second-codex"
 
+GIT_SOURCE_REMOTE="$SANDBOX/source-remote.git"
+GIT_SOURCE_WORK="$SANDBOX/source-work"
+GIT_SOURCE_UPDATER="$SANDBOX/source-updater"
+GIT_HOME="$SANDBOX/git-update-home"
+GIT_ROOT="$SANDBOX/git-update-root"
+GIT_SECOND="$SANDBOX/git-update-second"
+git init --bare "$GIT_SOURCE_REMOTE" >/dev/null
+mkdir -p "$GIT_SOURCE_WORK/lib"
+cp "$TEST_SOURCE/install.sh" "$TEST_SOURCE/second-codex" "$TEST_SOURCE/second-codex-shell.zsh" "$TEST_SOURCE/ownership-manifest.txt" "$TEST_SOURCE/README.md" "$GIT_SOURCE_WORK/"
+cp "$TEST_SOURCE/lib/session_convert.py" "$GIT_SOURCE_WORK/lib/session_convert.py"
+git -C "$GIT_SOURCE_WORK" init >/dev/null
+git -C "$GIT_SOURCE_WORK" config user.email "$TEST_GIT_EMAIL"
+git -C "$GIT_SOURCE_WORK" config user.name "$TEST_GIT_NAME"
+git -C "$GIT_SOURCE_WORK" config core.hooksPath /dev/null
+git -C "$GIT_SOURCE_WORK" add .
+git -C "$GIT_SOURCE_WORK" commit -m "initial source" >/dev/null
+git -C "$GIT_SOURCE_WORK" branch -M main
+git -C "$GIT_SOURCE_WORK" remote add origin "$GIT_SOURCE_REMOTE"
+git -C "$GIT_SOURCE_WORK" push -u origin main >/dev/null 2>&1
+git -C "$GIT_SOURCE_WORK" branch --set-upstream-to=origin/main main >/dev/null
+git clone "$GIT_SOURCE_REMOTE" "$GIT_SOURCE_UPDATER" >/dev/null 2>&1
+git -C "$GIT_SOURCE_UPDATER" config user.email "$TEST_GIT_EMAIL"
+git -C "$GIT_SOURCE_UPDATER" config user.name "$TEST_GIT_NAME"
+git -C "$GIT_SOURCE_UPDATER" config core.hooksPath /dev/null
+printf '\n# remote source update\n' >> "$GIT_SOURCE_UPDATER/second-codex"
+git -C "$GIT_SOURCE_UPDATER" add second-codex
+git -C "$GIT_SOURCE_UPDATER" commit -m "remote source update" >/dev/null
+git -C "$GIT_SOURCE_UPDATER" push origin main >/dev/null 2>&1
+git -C "$GIT_SOURCE_WORK" rev-parse --abbrev-ref --symbolic-full-name '@{u}' > "$SANDBOX/git-source-upstream.out"
+grep -Fxq "origin/main" "$SANDBOX/git-source-upstream.out"
+git -C "$GIT_SOURCE_WORK" fetch --quiet origin
+grep -Eq '^[0-9]+[[:space:]]+[1-9][0-9]*$' <(git -C "$GIT_SOURCE_WORK" rev-list --left-right --count HEAD...origin/main)
+
+mkdir -p "$GIT_HOME" "$GIT_SECOND"
+HOME="$GIT_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$GIT_ROOT" \
+CODEX_A_HOME="$GIT_HOME/.codex" \
+SECOND_CODEX_HOME="$GIT_SECOND" \
+ZSHRC="$GIT_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$GIT_HOME/.local/bin" \
+"$GIT_SOURCE_WORK/install.sh" > "$SANDBOX/git-source-install.out"
+if HOME="$GIT_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$GIT_ROOT" \
+  CODEX_A_HOME="$GIT_HOME/.codex" \
+  SECOND_CODEX_HOME="$GIT_SECOND" \
+  ZSHRC="$GIT_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$GIT_HOME/.local/bin" \
+  PATH="$GIT_HOME/.local/bin:$PATH" \
+  "$GIT_HOME/.local/bin/second-codex" doctor > "$SANDBOX/git-source-doctor.out" 2>&1; then
+  echo "FAIL doctor accepted a source checkout behind its upstream"
+  cat "$SANDBOX/git-source-doctor.out"
+  exit 1
+fi
+grep -Fq "FAIL source checkout is behind its upstream" "$SANDBOX/git-source-doctor.out" || {
+  echo "FAIL doctor did not explain that the source checkout is behind"
+  cat "$SANDBOX/git-source-doctor.out"
+  exit 1
+}
+grep -Fq "$PULL_FF_ONLY" "$SANDBOX/git-source-doctor.out" || {
+  echo "FAIL doctor did not suggest $PULL_FF_ONLY for a behind source checkout"
+  cat "$SANDBOX/git-source-doctor.out"
+  exit 1
+}
+grep -Fq "second-codex update" "$SANDBOX/git-source-doctor.out" || {
+  echo "FAIL doctor did not suggest second-codex update after pulling"
+  cat "$SANDBOX/git-source-doctor.out"
+  exit 1
+}
+HOME="$GIT_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$GIT_ROOT" \
+CODEX_A_HOME="$GIT_HOME/.codex" \
+SECOND_CODEX_HOME="$GIT_SECOND" \
+ZSHRC="$GIT_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$GIT_HOME/.local/bin" \
+"$GIT_HOME/.local/bin/second-codex" update > "$SANDBOX/git-source-update.out" 2>&1
+grep -Fq "source checkout is behind its upstream" "$SANDBOX/git-source-update.out" || {
+  echo "FAIL update did not warn that the source checkout is behind"
+  cat "$SANDBOX/git-source-update.out"
+  exit 1
+}
+grep -Fq "$PULL_FF_ONLY" "$SANDBOX/git-source-update.out" || {
+  echo "FAIL update did not suggest $PULL_FF_ONLY for a behind source checkout"
+  cat "$SANDBOX/git-source-update.out"
+  exit 1
+}
+grep -Fq "Updated second-codex install from" "$SANDBOX/git-source-update.out" || {
+  echo "FAIL update did not proceed after warning about a behind source checkout"
+  cat "$SANDBOX/git-source-update.out"
+  exit 1
+}
+
+DIVERGED_SOURCE_REMOTE="$SANDBOX/diverged-source-remote.git"
+DIVERGED_SOURCE_WORK="$SANDBOX/diverged-source-work"
+DIVERGED_SOURCE_UPDATER="$SANDBOX/diverged-source-updater"
+DIVERGED_HOME="$SANDBOX/diverged-update-home"
+DIVERGED_ROOT="$SANDBOX/diverged-update-root"
+DIVERGED_SECOND="$SANDBOX/diverged-update-second"
+git init --bare "$DIVERGED_SOURCE_REMOTE" >/dev/null
+git clone "$GIT_SOURCE_REMOTE" "$DIVERGED_SOURCE_WORK" >/dev/null 2>&1
+git -C "$DIVERGED_SOURCE_WORK" remote set-url origin "$DIVERGED_SOURCE_REMOTE"
+git -C "$DIVERGED_SOURCE_WORK" push -u origin main >/dev/null 2>&1
+git -C "$DIVERGED_SOURCE_WORK" config user.email "$TEST_GIT_EMAIL"
+git -C "$DIVERGED_SOURCE_WORK" config user.name "$TEST_GIT_NAME"
+git -C "$DIVERGED_SOURCE_WORK" config core.hooksPath /dev/null
+git clone "$DIVERGED_SOURCE_REMOTE" "$DIVERGED_SOURCE_UPDATER" >/dev/null 2>&1
+git -C "$DIVERGED_SOURCE_UPDATER" config user.email "$TEST_GIT_EMAIL"
+git -C "$DIVERGED_SOURCE_UPDATER" config user.name "$TEST_GIT_NAME"
+git -C "$DIVERGED_SOURCE_UPDATER" config core.hooksPath /dev/null
+printf '\n# remote diverged source update\n' >> "$DIVERGED_SOURCE_UPDATER/second-codex"
+git -C "$DIVERGED_SOURCE_UPDATER" add second-codex
+git -C "$DIVERGED_SOURCE_UPDATER" commit -m "remote diverged source update" >/dev/null
+git -C "$DIVERGED_SOURCE_UPDATER" push origin main >/dev/null 2>&1
+printf '\n# local diverged source update\n' >> "$DIVERGED_SOURCE_WORK/second-codex"
+git -C "$DIVERGED_SOURCE_WORK" add second-codex
+git -C "$DIVERGED_SOURCE_WORK" commit -m "local diverged source update" >/dev/null
+git -C "$DIVERGED_SOURCE_WORK" fetch --quiet origin
+grep -Eq '^[1-9][0-9]*[[:space:]]+[1-9][0-9]*$' <(git -C "$DIVERGED_SOURCE_WORK" rev-list --left-right --count HEAD...origin/main)
+
+mkdir -p "$DIVERGED_HOME" "$DIVERGED_SECOND"
+HOME="$DIVERGED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$DIVERGED_ROOT" \
+CODEX_A_HOME="$DIVERGED_HOME/.codex" \
+SECOND_CODEX_HOME="$DIVERGED_SECOND" \
+ZSHRC="$DIVERGED_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$DIVERGED_HOME/.local/bin" \
+"$DIVERGED_SOURCE_WORK/install.sh" > "$SANDBOX/diverged-source-install.out"
+if HOME="$DIVERGED_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$DIVERGED_ROOT" \
+  CODEX_A_HOME="$DIVERGED_HOME/.codex" \
+  SECOND_CODEX_HOME="$DIVERGED_SECOND" \
+  ZSHRC="$DIVERGED_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$DIVERGED_HOME/.local/bin" \
+  PATH="$DIVERGED_HOME/.local/bin:$PATH" \
+  "$DIVERGED_HOME/.local/bin/second-codex" doctor > "$SANDBOX/diverged-source-doctor.out" 2>&1; then
+  echo "FAIL doctor accepted a source checkout diverged from its upstream"
+  cat "$SANDBOX/diverged-source-doctor.out"
+  exit 1
+fi
+grep -Fq "FAIL source checkout has diverged from its upstream" "$SANDBOX/diverged-source-doctor.out" || {
+  echo "FAIL doctor did not explain source checkout divergence"
+  cat "$SANDBOX/diverged-source-doctor.out"
+  exit 1
+}
+if grep -Fq "$PULL_FF_ONLY" "$SANDBOX/diverged-source-doctor.out"; then
+  echo "FAIL doctor suggested $PULL_FF_ONLY for a diverged source checkout"
+  cat "$SANDBOX/diverged-source-doctor.out"
+  exit 1
+fi
+HOME="$DIVERGED_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$DIVERGED_ROOT" \
+CODEX_A_HOME="$DIVERGED_HOME/.codex" \
+SECOND_CODEX_HOME="$DIVERGED_SECOND" \
+ZSHRC="$DIVERGED_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$DIVERGED_HOME/.local/bin" \
+"$DIVERGED_HOME/.local/bin/second-codex" update > "$SANDBOX/diverged-source-update.out" 2>&1
+grep -Fq "source checkout has diverged from its upstream" "$SANDBOX/diverged-source-update.out" || {
+  echo "FAIL update did not warn that the source checkout has diverged"
+  cat "$SANDBOX/diverged-source-update.out"
+  exit 1
+}
+grep -Fq "git status" "$SANDBOX/diverged-source-update.out" || {
+  echo "FAIL update did not give a safe manual next step for a diverged source checkout"
+  cat "$SANDBOX/diverged-source-update.out"
+  exit 1
+}
+if grep -Fq "$PULL_FF_ONLY" "$SANDBOX/diverged-source-update.out"; then
+  echo "FAIL update suggested $PULL_FF_ONLY for a diverged source checkout"
+  cat "$SANDBOX/diverged-source-update.out"
+  exit 1
+fi
+grep -Fq "Updated second-codex install from" "$SANDBOX/diverged-source-update.out" || {
+  echo "FAIL update did not proceed after warning about a diverged source checkout"
+  cat "$SANDBOX/diverged-source-update.out"
+  exit 1
+}
+
+AHEAD_SOURCE_REMOTE="$SANDBOX/ahead-source-remote.git"
+AHEAD_SOURCE_WORK="$SANDBOX/ahead-source-work"
+AHEAD_HOME="$SANDBOX/ahead-update-home"
+AHEAD_ROOT="$SANDBOX/ahead-update-root"
+AHEAD_SECOND="$SANDBOX/ahead-update-second"
+git init --bare "$AHEAD_SOURCE_REMOTE" >/dev/null
+git clone "$GIT_SOURCE_REMOTE" "$AHEAD_SOURCE_WORK" >/dev/null 2>&1
+git -C "$AHEAD_SOURCE_WORK" remote set-url origin "$AHEAD_SOURCE_REMOTE"
+git -C "$AHEAD_SOURCE_WORK" push -u origin main >/dev/null 2>&1
+git -C "$AHEAD_SOURCE_WORK" config user.email "$TEST_GIT_EMAIL"
+git -C "$AHEAD_SOURCE_WORK" config user.name "$TEST_GIT_NAME"
+git -C "$AHEAD_SOURCE_WORK" config core.hooksPath /dev/null
+printf '\n# local ahead source update\n' >> "$AHEAD_SOURCE_WORK/second-codex"
+git -C "$AHEAD_SOURCE_WORK" add second-codex
+git -C "$AHEAD_SOURCE_WORK" commit -m "local ahead source update" >/dev/null
+git -C "$AHEAD_SOURCE_WORK" fetch --quiet origin
+grep -Eq '^[1-9][0-9]*[[:space:]]+0$' <(git -C "$AHEAD_SOURCE_WORK" rev-list --left-right --count HEAD...origin/main)
+
+mkdir -p "$AHEAD_HOME" "$AHEAD_SECOND"
+HOME="$AHEAD_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$AHEAD_ROOT" \
+CODEX_A_HOME="$AHEAD_HOME/.codex" \
+SECOND_CODEX_HOME="$AHEAD_SECOND" \
+ZSHRC="$AHEAD_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$AHEAD_HOME/.local/bin" \
+"$AHEAD_SOURCE_WORK/install.sh" > "$SANDBOX/ahead-source-install.out"
+HOME="$AHEAD_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$AHEAD_ROOT" \
+CODEX_A_HOME="$AHEAD_HOME/.codex" \
+SECOND_CODEX_HOME="$AHEAD_SECOND" \
+ZSHRC="$AHEAD_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$AHEAD_HOME/.local/bin" \
+PATH="$AHEAD_HOME/.local/bin:$PATH" \
+"$AHEAD_HOME/.local/bin/second-codex" doctor > "$SANDBOX/ahead-source-doctor.out" 2>&1
+grep -Fq "PASS source checkout has local commits not on upstream; no pull needed" "$SANDBOX/ahead-source-doctor.out" || {
+  echo "FAIL doctor did not explain the ahead-only source checkout state"
+  cat "$SANDBOX/ahead-source-doctor.out"
+  exit 1
+}
+if grep -Fq "no Git upstream available" "$SANDBOX/ahead-source-doctor.out"; then
+  echo "FAIL doctor treated an ahead-only source checkout as missing upstream"
+  cat "$SANDBOX/ahead-source-doctor.out"
+  exit 1
+fi
+if grep -Fq "$PULL_FF_ONLY" "$SANDBOX/ahead-source-doctor.out"; then
+  echo "FAIL doctor suggested $PULL_FF_ONLY for an ahead-only source checkout"
+  cat "$SANDBOX/ahead-source-doctor.out"
+  exit 1
+fi
+
+SLASH_BRANCH_REMOTE="$SANDBOX/slash-branch-remote.git"
+SLASH_BRANCH_WORK="$SANDBOX/slash-branch-work"
+SLASH_BRANCH_UPDATER="$SANDBOX/slash-branch-updater"
+SLASH_BRANCH_HOME="$SANDBOX/slash-branch-home"
+SLASH_BRANCH_ROOT="$SANDBOX/slash-branch-root"
+SLASH_BRANCH_SECOND="$SANDBOX/slash-branch-second"
+git init --bare "$SLASH_BRANCH_REMOTE" >/dev/null
+git clone "$GIT_SOURCE_REMOTE" "$SLASH_BRANCH_WORK" >/dev/null 2>&1
+git -C "$SLASH_BRANCH_WORK" remote set-url origin "$SLASH_BRANCH_REMOTE"
+git -C "$SLASH_BRANCH_WORK" checkout -b feature/source-check >/dev/null 2>&1
+git -C "$SLASH_BRANCH_WORK" push -u origin feature/source-check >/dev/null 2>&1
+git -C "$SLASH_BRANCH_WORK" config user.email "$TEST_GIT_EMAIL"
+git -C "$SLASH_BRANCH_WORK" config user.name "$TEST_GIT_NAME"
+git -C "$SLASH_BRANCH_WORK" config core.hooksPath /dev/null
+git clone "$SLASH_BRANCH_REMOTE" "$SLASH_BRANCH_UPDATER" >/dev/null 2>&1
+git -C "$SLASH_BRANCH_UPDATER" checkout feature/source-check >/dev/null 2>&1
+git -C "$SLASH_BRANCH_UPDATER" config user.email "$TEST_GIT_EMAIL"
+git -C "$SLASH_BRANCH_UPDATER" config user.name "$TEST_GIT_NAME"
+git -C "$SLASH_BRANCH_UPDATER" config core.hooksPath /dev/null
+printf '\n# remote slash branch source update\n' >> "$SLASH_BRANCH_UPDATER/second-codex"
+git -C "$SLASH_BRANCH_UPDATER" add second-codex
+git -C "$SLASH_BRANCH_UPDATER" commit -m "remote slash branch source update" >/dev/null
+git -C "$SLASH_BRANCH_UPDATER" push origin feature/source-check >/dev/null 2>&1
+git -C "$SLASH_BRANCH_WORK" fetch --quiet origin
+grep -Eq '^0[[:space:]]+[1-9][0-9]*$' <(git -C "$SLASH_BRANCH_WORK" rev-list --left-right --count 'HEAD...@{upstream}')
+
+mkdir -p "$SLASH_BRANCH_HOME" "$SLASH_BRANCH_SECOND"
+HOME="$SLASH_BRANCH_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$SLASH_BRANCH_ROOT" \
+CODEX_A_HOME="$SLASH_BRANCH_HOME/.codex" \
+SECOND_CODEX_HOME="$SLASH_BRANCH_SECOND" \
+ZSHRC="$SLASH_BRANCH_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$SLASH_BRANCH_HOME/.local/bin" \
+"$SLASH_BRANCH_WORK/install.sh" > "$SANDBOX/slash-branch-install.out"
+if HOME="$SLASH_BRANCH_HOME" \
+  SECOND_CODEX_SWITCH_ROOT="$SLASH_BRANCH_ROOT" \
+  CODEX_A_HOME="$SLASH_BRANCH_HOME/.codex" \
+  SECOND_CODEX_HOME="$SLASH_BRANCH_SECOND" \
+  ZSHRC="$SLASH_BRANCH_HOME/.zshrc" \
+  SECOND_CODEX_PATH_DIR="$SLASH_BRANCH_HOME/.local/bin" \
+  PATH="$SLASH_BRANCH_HOME/.local/bin:$PATH" \
+  "$SLASH_BRANCH_HOME/.local/bin/second-codex" doctor > "$SANDBOX/slash-branch-doctor.out" 2>&1; then
+  echo "FAIL doctor accepted a slash-named source branch behind its upstream"
+  cat "$SANDBOX/slash-branch-doctor.out"
+  exit 1
+fi
+grep -Fq "FAIL source checkout is behind its upstream" "$SANDBOX/slash-branch-doctor.out" || {
+  echo "FAIL doctor did not handle slash-named upstream branch freshness"
+  cat "$SANDBOX/slash-branch-doctor.out"
+  exit 1
+}
+
+PARENT_SOURCE_REPO="$SANDBOX/parent-source-repo"
+PARENT_SOURCE_REMOTE="$SANDBOX/parent-source-remote.git"
+PARENT_INNER_SOURCE="$PARENT_SOURCE_REPO/inner-source"
+PARENT_HOME="$SANDBOX/parent-source-home"
+PARENT_ROOT="$SANDBOX/parent-source-root"
+PARENT_SECOND="$SANDBOX/parent-source-second"
+git init --bare "$PARENT_SOURCE_REMOTE" >/dev/null
+git init "$PARENT_SOURCE_REPO" >/dev/null
+git -C "$PARENT_SOURCE_REPO" config user.email "$TEST_GIT_EMAIL"
+git -C "$PARENT_SOURCE_REPO" config user.name "$TEST_GIT_NAME"
+git -C "$PARENT_SOURCE_REPO" config core.hooksPath /dev/null
+git -C "$PARENT_SOURCE_REPO" commit --allow-empty -m "parent initial" >/dev/null
+git -C "$PARENT_SOURCE_REPO" branch -M main
+git -C "$PARENT_SOURCE_REPO" remote add origin "$PARENT_SOURCE_REMOTE"
+git -C "$PARENT_SOURCE_REPO" push -u origin main >/dev/null 2>&1
+mkdir -p "$PARENT_INNER_SOURCE/lib"
+cp "$TEST_SOURCE/install.sh" "$TEST_SOURCE/second-codex" "$TEST_SOURCE/second-codex-shell.zsh" "$TEST_SOURCE/ownership-manifest.txt" "$TEST_SOURCE/README.md" "$PARENT_INNER_SOURCE/"
+cp "$TEST_SOURCE/lib/session_convert.py" "$PARENT_INNER_SOURCE/lib/session_convert.py"
+mkdir -p "$PARENT_HOME" "$PARENT_SECOND"
+HOME="$PARENT_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$PARENT_ROOT" \
+CODEX_A_HOME="$PARENT_HOME/.codex" \
+SECOND_CODEX_HOME="$PARENT_SECOND" \
+ZSHRC="$PARENT_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$PARENT_HOME/.local/bin" \
+"$PARENT_INNER_SOURCE/install.sh" > "$SANDBOX/parent-source-install.out"
+HOME="$PARENT_HOME" \
+SECOND_CODEX_SWITCH_ROOT="$PARENT_ROOT" \
+CODEX_A_HOME="$PARENT_HOME/.codex" \
+SECOND_CODEX_HOME="$PARENT_SECOND" \
+ZSHRC="$PARENT_HOME/.zshrc" \
+SECOND_CODEX_PATH_DIR="$PARENT_HOME/.local/bin" \
+PATH="$PARENT_HOME/.local/bin:$PATH" \
+"$PARENT_HOME/.local/bin/second-codex" doctor > "$SANDBOX/parent-source-doctor.out" 2>&1
+grep -Fq "PASS source checkout freshness not checked; could not check Git upstream" "$SANDBOX/parent-source-doctor.out" || {
+  echo "FAIL doctor inspected a parent Git worktree for a non-repo source directory"
+  cat "$SANDBOX/parent-source-doctor.out"
+  exit 1
+}
+
 PRESEEDED_HOME="$SANDBOX/preseed-home"
 mkdir -p "$PRESEEDED_HOME"
 cat > "$PRESEEDED_HOME/.zshrc" <<'ZSHRC'
@@ -186,7 +511,7 @@ HOME="$PRESEEDED_HOME" \
 CODEX_A_HOME="$PRESEEDED_HOME/.codex" \
 SECOND_CODEX_HOME="$PRESEEDED_HOME/.codex-second" \
 ZSHRC="$PRESEEDED_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/preseed-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/preseed-install.out"
 if [ "$(grep -c "second-codex-shell.zsh" "$PRESEEDED_HOME/.zshrc")" -ne 1 ]; then
   echo "FAIL installer appended duplicate helper source line to existing marker block"
   cat "$PRESEEDED_HOME/.zshrc"
@@ -209,7 +534,7 @@ HOME="$COMMENTED_HOME" \
 CODEX_A_HOME="$COMMENTED_HOME/.codex" \
 SECOND_CODEX_HOME="$COMMENTED_HOME/.codex-second" \
 ZSHRC="$COMMENTED_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/commented-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/commented-install.out"
 if grep -Fxq '# [[ -r "$HOME/.codex-account-switch/second-codex-shell.zsh" ]] && source "$HOME/.codex-account-switch/second-codex-shell.zsh"' "$COMMENTED_HOME/.zshrc"; then
   echo "FAIL installer accepted commented-out helper source line as active"
   cat "$COMMENTED_HOME/.zshrc"
@@ -224,7 +549,7 @@ HOME="$LEGACY_HOME" \
 CODEX_A_HOME="$LEGACY_HOME/.codex" \
 SECOND_CODEX_HOME="$LEGACY_HOME/.codex-second" \
 ZSHRC="$LEGACY_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/legacy-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/legacy-install.out"
 if [ "$(grep -c "second-codex-shell.zsh" "$LEGACY_HOME/.zshrc")" -ne 1 ]; then
   echo "FAIL installer appended duplicate helper source line to exact legacy source line"
   cat "$LEGACY_HOME/.zshrc"
@@ -248,7 +573,7 @@ SECOND_CODEX_SWITCH_ROOT="$MOVED_HOME/new-root" \
 CODEX_A_HOME="$MOVED_HOME/.codex" \
 SECOND_CODEX_HOME="$MOVED_HOME/.codex-second" \
 ZSHRC="$MOVED_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/moved-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/moved-install.out"
 grep -Fxq "source '$MOVED_HOME/new-root/second-codex-shell.zsh'" "$MOVED_HOME/.zshrc"
 if grep -Fq "$MOVED_HOME/old-root/second-codex-shell.zsh" "$MOVED_HOME/.zshrc"; then
   echo "FAIL installer left stale helper source path in marked block"
@@ -278,7 +603,7 @@ SECOND_CODEX_SWITCH_ROOT="$DUP_HOME/new-root" \
 CODEX_A_HOME="$DUP_HOME/.codex" \
 SECOND_CODEX_HOME="$DUP_HOME/.codex-second" \
 ZSHRC="$DUP_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/duplicate-block-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/duplicate-block-install.out"
 grep -Fxq "export KEEP_ONE=1" "$DUP_HOME/.zshrc"
 grep -Fxq "export KEEP_TWO=1" "$DUP_HOME/.zshrc"
 if [ "$(grep -c "# >>> second-codex shell helper >>>" "$DUP_HOME/.zshrc")" -ne 1 ]; then
@@ -309,7 +634,7 @@ SECOND_CODEX_SWITCH_ROOT="$CURRENT_DUP_HOME/new-root" \
 CODEX_A_HOME="$CURRENT_DUP_HOME/.codex" \
 SECOND_CODEX_HOME="$CURRENT_DUP_HOME/.codex-second" \
 ZSHRC="$CURRENT_DUP_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/current-duplicate-block-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/current-duplicate-block-install.out"
 grep -Fxq "export KEEP_CURRENT_DUP=1" "$CURRENT_DUP_HOME/.zshrc"
 if [ "$(grep -c "# >>> second-codex shell helper >>>" "$CURRENT_DUP_HOME/.zshrc")" -ne 1 ]; then
   echo "FAIL installer skipped duplicate helper collapse when one block was already current"
@@ -338,7 +663,7 @@ SECOND_CODEX_SWITCH_ROOT="$NESTED_DUP_HOME/new-root" \
 CODEX_A_HOME="$NESTED_DUP_HOME/.codex" \
 SECOND_CODEX_HOME="$NESTED_DUP_HOME/.codex-second" \
 ZSHRC="$NESTED_DUP_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/nested-duplicate-block-install.out"
+"$TEST_SOURCE/install.sh" >"$SANDBOX/nested-duplicate-block-install.out"
 grep -Fxq "export KEEP_NESTED_DUP=1" "$NESTED_DUP_HOME/.zshrc"
 if [ "$(grep -c "# >>> second-codex shell helper >>>" "$NESTED_DUP_HOME/.zshrc")" -ne 1 ] \
   || [ "$(grep -c "# <<< second-codex shell helper <<<" "$NESTED_DUP_HOME/.zshrc")" -ne 1 ]; then
@@ -360,7 +685,7 @@ SECOND_CODEX_SWITCH_ROOT="$MALFORMED_HOME/new-root" \
 CODEX_A_HOME="$MALFORMED_HOME/.codex" \
 SECOND_CODEX_HOME="$MALFORMED_HOME/.codex-second" \
 ZSHRC="$MALFORMED_HOME/.zshrc" \
-"$REPO_ROOT/install.sh" >"$SANDBOX/malformed-install.out" 2>&1 && {
+"$TEST_SOURCE/install.sh" >"$SANDBOX/malformed-install.out" 2>&1 && {
   echo "FAIL installer accepted malformed helper block"
   cat "$SANDBOX/malformed-install.out"
   exit 1
@@ -382,7 +707,7 @@ if HOME="$MANAGED_HOME" \
   CODEX_A_HOME="$MANAGED_HOME/.codex" \
   SECOND_CODEX_HOME="$MANAGED_HOME/.codex-second" \
   ZSHRC="$MANAGED_HOME/.zshrc" \
-  "$REPO_ROOT/install.sh" >"$SANDBOX/managed-install.out" 2>&1; then
+  "$TEST_SOURCE/install.sh" >"$SANDBOX/managed-install.out" 2>&1; then
   echo "FAIL installer mutated symlink-managed .zshrc instead of failing loud"
   cat "$SANDBOX/managed-install.out"
   exit 1
@@ -409,7 +734,7 @@ if HOME="$MANAGED_STALE_HOME" \
   CODEX_A_HOME="$MANAGED_STALE_HOME/.codex" \
   SECOND_CODEX_HOME="$MANAGED_STALE_HOME/.codex-second" \
   ZSHRC="$MANAGED_STALE_HOME/.zshrc" \
-  "$REPO_ROOT/install.sh" >"$SANDBOX/managed-stale-install.out" 2>&1; then
+  "$TEST_SOURCE/install.sh" >"$SANDBOX/managed-stale-install.out" 2>&1; then
   echo "FAIL installer updated stale marked block through symlink-managed .zshrc"
   cat "$SANDBOX/managed-stale-install.out"
   exit 1
@@ -423,7 +748,7 @@ if HOME="$MISSING_PARENT_HOME" \
   CODEX_A_HOME="$MISSING_PARENT_HOME/.codex" \
   SECOND_CODEX_HOME="$MISSING_PARENT_HOME/.codex-second" \
   ZSHRC="$MISSING_PARENT_HOME/.config/zsh/.zshrc" \
-  "$REPO_ROOT/install.sh" >"$SANDBOX/missing-parent-install.out" 2>&1; then
+  "$TEST_SOURCE/install.sh" >"$SANDBOX/missing-parent-install.out" 2>&1; then
   echo "FAIL installer created or wrote to a shell config with missing parent directory"
   cat "$SANDBOX/missing-parent-install.out"
   exit 1

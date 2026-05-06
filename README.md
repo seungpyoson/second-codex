@@ -51,11 +51,13 @@ The shell helper wraps both `codex` and `second-codex`. After an interactive, pr
 Updates:
 
 ```bash
+cd /path/to/second-codex
+git pull --ff-only
 second-codex update
 second-codex doctor
 ```
 
-`install.sh` records the source checkout it was run from. `second-codex update` refreshes the installed wrapper, shell helper, manifest, PATH entrypoint, and marked `.zshrc` block from that recorded source. If the installed wrapper becomes stale, interactive runs warn once for the current source version and continue. `second-codex doctor` reports install freshness, shell-helper block status, and PATH entrypoint status.
+`git pull --ff-only` updates the local source checkout from GitHub. `install.sh` records that source checkout, and `second-codex update` refreshes the installed wrapper, shell helper, manifest, PATH entrypoint, and marked `.zshrc` block from it. If the installed wrapper becomes stale, interactive runs warn once for the current source version and continue. `second-codex doctor` reports install freshness, source checkout freshness, shell-helper block status, and PATH entrypoint status.
 
 Resume directions:
 

@@ -72,6 +72,94 @@ source_wrapper_version() {
   cksum "$source_wrapper" | awk '{ print $1 ":" $2 }'
 }
 
+git_fetch_quiet_with_timeout() {
+  local source_root="$1"
+  local timeout="${SECOND_CODEX_GIT_FETCH_TIMEOUT_SECONDS:-10}"
+  local elapsed=0
+  local pid
+  [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -gt 0 ]] || timeout=10
+  GIT_TERMINAL_PROMPT=0 git -C "$source_root" fetch --quiet >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( elapsed >= timeout )); then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$pid"
+}
+
+source_checkout_status() {
+  local source_root="$1"
+  local counts left right extra toplevel
+  command -v git >/dev/null 2>&1 || return 2
+  git -C "$source_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 2
+  toplevel="$(git -C "$source_root" rev-parse --show-toplevel 2>/dev/null)" || return 2
+  [[ "$toplevel" -ef "$source_root" ]] || return 2
+  git -C "$source_root" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || return 2
+  git_fetch_quiet_with_timeout "$source_root" || return 2
+  counts="$(git -C "$source_root" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null)" || return 2
+  read -r left right extra <<< "$counts"
+  [[ -z "${extra:-}" && "$left" =~ ^[0-9]+$ && "$right" =~ ^[0-9]+$ ]] || return 2
+  if (( left > 0 && right > 0 )); then
+    return 3
+  fi
+  if (( right > 0 )); then
+    return 1
+  fi
+  if (( left > 0 )); then
+    return 4
+  fi
+  return 0
+}
+
+print_source_checkout_behind_guidance() {
+  local source_root="$1"
+  echo "FAIL source checkout is behind its upstream"
+  echo "Run these commands:"
+  echo "  cd $(shell_quote "$source_root")"
+  echo "  git pull --ff-only"
+  echo "  second-codex update"
+}
+
+print_source_checkout_diverged_guidance() {
+  local source_root="$1"
+  echo "FAIL source checkout has diverged from its upstream"
+  echo "Your local source checkout and its upstream both have commits the other does not."
+  echo "Run git status to inspect both sides, then merge or rebase before running second-codex update:"
+  echo "  cd $(shell_quote "$source_root")"
+  echo "  git status"
+}
+
+warn_if_source_checkout_needs_attention() {
+  local source_root="$1"
+  local rc=0
+  source_checkout_status "$source_root" || rc=$?
+  case "$rc" in
+    0)
+      return 0
+      ;;
+    1)
+      echo "second-codex: source checkout is behind its upstream." >&2
+      echo "Run these commands before relying on this update:" >&2
+      echo "  cd $(shell_quote "$source_root")" >&2
+      echo "  git pull --ff-only" >&2
+      echo "  second-codex update" >&2
+      ;;
+    3)
+      echo "second-codex: source checkout has diverged from its upstream." >&2
+      echo "Your local source checkout and its upstream both have commits the other does not." >&2
+      echo "Run git status to inspect both sides, then merge or rebase before relying on this update:" >&2
+      echo "  cd $(shell_quote "$source_root")" >&2
+      echo "  git status" >&2
+      ;;
+  esac
+  return 0
+}
+
 warn_if_installed_wrapper_stale() {
   [[ "${1:-}" != "update" && "${1:-}" != "doctor" ]] || return 0
   [[ -t 2 || "${SECOND_CODEX_TEST_FORCE_STALE_WARNING:-0}" == "1" ]] || return 0
@@ -1645,6 +1733,7 @@ install_update() {
     echo "second-codex cannot update because the recorded source has no executable install.sh: $source_root" >&2
     return 66
   fi
+  warn_if_source_checkout_needs_attention "$source_root"
   SECOND_CODEX_SWITCH_ROOT="$ROOT" \
     CODEX_A_HOME="$A_HOME" \
     SECOND_CODEX_HOME="$B_HOME" \
@@ -1672,6 +1761,36 @@ doctor_install_freshness() {
   fi
   echo "FAIL installed wrapper is stale; run second-codex update"
   return 1
+}
+
+doctor_source_checkout_freshness() {
+  local source_root
+  local rc=0
+  source_root="$(install_source_root)" || {
+    echo "PASS source checkout freshness not checked; installed wrapper source is not recorded"
+    return 0
+  }
+  source_checkout_status "$source_root" || rc=$?
+  if (( rc == 0 )); then
+    echo "PASS source checkout is current"
+    return 0
+  fi
+  case "$rc" in
+    1)
+      print_source_checkout_behind_guidance "$source_root"
+      return 1
+      ;;
+    3)
+      print_source_checkout_diverged_guidance "$source_root"
+      return 1
+      ;;
+    4)
+      echo "PASS source checkout has local commits not on upstream; no pull needed"
+      return 0
+      ;;
+  esac
+  echo "PASS source checkout freshness not checked; could not check Git upstream"
+  return 0
 }
 
 doctor_shell_helper_block() {
@@ -1806,6 +1925,7 @@ doctor() {
   fi
 
   doctor_install_freshness || failed=1
+  doctor_source_checkout_freshness || failed=1
   doctor_shell_helper_block || failed=1
   doctor_path_entrypoint || failed=1
 
