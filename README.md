@@ -9,7 +9,7 @@ Unix-like system are required.
 
 The command suffix is the expected email local part. For example,
 `codex-spson.engineering` accepts a saved login whose email starts with
-`spson.engineering@`. The launcher checks identity before ordinary runs and
+`spson.engineering@` (case-insensitive). The launcher checks identity before ordinary runs and
 status requests. Provider-side authentication remains the native CLI's job.
 An expired or revoked subscription may still require a new login.
 

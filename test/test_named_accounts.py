@@ -314,6 +314,10 @@ class InstalledAccounts(unittest.TestCase):
         self.assertTrue((self.root / "new-bin/codex-seungpyoson").is_symlink())
 
     def test_moved_shared_source_retargets_only_owned_links(self):
+        for account in self.config["accounts"].values():
+            account["shared"] = {name: str(self.root / "shared") + "//" + name + "/"
+                                 for name in account["shared"]}
+        self.save()
         self.assertEqual(self.install().returncode, 0)
         source = self.root / "shared"
         moved = self.root / "shared-moved"
@@ -341,8 +345,10 @@ class InstalledAccounts(unittest.TestCase):
         self.assertEqual(self.install().returncode, 0)
         exe = self.root / "native-claude"
         exe.write_text("#!/usr/bin/env python3\nprint('{\"loggedIn\":false}')\n")
-        for option in ("--append-system-prompt", "--unknown-future-option"):
-            result = self.run_account("claude-sp.openclaw", option, "auth", "task")
+        for args in (["--append-system-prompt", "auth", "task"],
+                     ["--unknown-future-option", "auth", "task"],
+                     ["--add-dir", "some-directory", "auth", "-p", "task"]):
+            result = self.run_account("claude-sp.openclaw", *args)
             self.assertEqual(result.returncode, 78, result.stderr)
             self.assertIn("Not signed in", result.stderr)
 
@@ -354,8 +360,9 @@ class InstalledAccounts(unittest.TestCase):
         result = self.run_account("claude-sp.openclaw", "--model", "explicit", "--effort", "high", "-p", "hi")
         self.assertEqual(result.returncode, 0, result.stderr)
         args = json.loads(result.stdout)["args"]
-        self.assertEqual(args.count("--model"), 1)
-        self.assertEqual(json.loads(args[args.index("--settings") + 1]), {"model": "opus", "effortLevel": "max"})
+        self.assertEqual(args[:4], ["--model", "opus", "--effort", "max"])
+        self.assertEqual(args[4:8], ["--model", "explicit", "--effort", "high"])
+        self.assertNotIn("--settings", args)
 
     def test_canonical_provider_overrides_and_claude_api_helpers_are_rejected(self):
         self.assertEqual(self.install().returncode, 0)

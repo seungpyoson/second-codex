@@ -164,10 +164,13 @@ def model_arguments(account):
         # Config overrides are repeatable; --model is not. Native --model and
         # later user config overrides therefore keep their normal precedence.
         return ["-c", "model=" + json.dumps(settings["model"]), "-c", "model_reasoning_effort=" + json.dumps(settings["model_reasoning_effort"])]
-    defaults = {"model": settings["model"]}
+    # Claude accepts repeated native model/effort options. Leading defaults keep
+    # their CLI precedence over ambient model variables; explicit later flags
+    # retain the native last-value behavior. Effort "max" is a CLI-only value.
+    defaults = ["--model", settings["model"]]
     if "effortLevel" in settings:
-        defaults["effortLevel"] = settings["effortLevel"]
-    return ["--settings", json.dumps(defaults)]
+        defaults += ["--effort", settings["effortLevel"]]
+    return defaults
 
 
 def native_environment(provider, home, command, ambient):
@@ -212,16 +215,16 @@ def authenticated_identity(account, env):
 
 def authentication_action(provider, args):
     """Recognize native auth subcommands after supported leading CLI options."""
-    valued = {"--model", "--add-dir", "--effort", "--agent"}
+    valued = {"--model", "--effort", "--agent"}
     if provider == "codex":
         valued |= {"-m", "-c", "--config", "-C", "--cd", "-s", "--sandbox",
-                   "-a", "--ask-for-approval", "--enable", "--disable"}
+                   "-a", "--ask-for-approval", "--enable", "--disable", "--add-dir"}
     i = 0
     while i < len(args) and args[i].startswith("-"):
         flag = args[i].split("=", 1)[0]
         if flag not in valued:
-            # Unknown options can consume the next token. Never mistake an
-            # option value such as "auth" for a native authentication command.
+            # Unknown or variadic options can consume following tokens. Never
+            # mistake an option value for a native authentication command.
             return False, False
         i += 1 if "=" in args[i] else 2
     tail = args[i:]
@@ -294,7 +297,7 @@ def install_locked(config):
                 is_managed_link = (path.is_symlink() and previous is not None
                                    and previous["home"] == account["home"]
                                    and name in previous["shared"]
-                                   and os.readlink(path) == previous["shared"][name])
+                                   and os.readlink(path) == str(Path(previous["shared"][name])))
                 require(is_approved_file or is_approved_dir or is_managed_link,
                         f"Conflicting profile path: {path}")
                 backup = root / "preserved" / batch / command / name
