@@ -9,8 +9,8 @@ Unix-like system are required.
 
 The command suffix is the expected email local part. For example,
 `codex-spson.engineering` accepts a saved login whose email starts with
-`spson.engineering@` (case-insensitive). The launcher checks identity before ordinary runs and
-status requests. Provider-side authentication remains the native CLI's job.
+`spson.engineering@` (case-insensitive). The launcher checks identity before
+ordinary runs and status requests. Provider-side authentication remains the native CLI's job.
 An expired or revoked subscription may still require a new login.
 
 Install from a private JSON manifest with these required fields:
@@ -45,6 +45,8 @@ defaults always come from the canonical source at launch (Codex requires both
 explicit `effortLevel` when configured). Explicit native model arguments still
 override those defaults. Agent policy and shared directories retain their
 canonical references.
+Claude's `CLAUDE_CODE_EFFORT_LEVEL` environment override is rejected; configure
+effort in the canonical settings or select it explicitly with the native flag.
 Credentials, session history, databases, and other runtime paths cannot be
 listed there. Existing files conflict unless their exact SHA-256 is explicitly
 listed in `replace_sha256`; approved files are moved into the installation's

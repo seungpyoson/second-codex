@@ -303,6 +303,13 @@ class InstalledAccounts(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('model="configured-model"', json.loads(result.stdout)["args"])
         self.assertIn('model_reasoning_effort="max"', json.loads(result.stdout)["args"])
+        # Old installations and new manifests may spell the same home differently.
+        installed = self.root / "installed/accounts.json"
+        prior = json.loads(installed.read_text())
+        prior["accounts"]["codex-spson.engineering"]["home"] += "/./"
+        installed.write_text(json.dumps(prior))
+        self.config["accounts"]["codex-spson.engineering"]["home"] += "//"
+        self.save()
         self.assertEqual(self.install().returncode, 0)
         self.assertIn("trust_level", path.read_text())
 
@@ -363,6 +370,21 @@ class InstalledAccounts(unittest.TestCase):
         self.assertEqual(args[:4], ["--model", "opus", "--effort", "max"])
         self.assertEqual(args[4:8], ["--model", "explicit", "--effort", "high"])
         self.assertNotIn("--settings", args)
+
+    def test_claude_effort_cannot_silently_fall_back_or_be_overridden_by_environment(self):
+        self.assertEqual(self.install().returncode, 0)
+        settings = self.root / "shared/settings.json"
+        for effort in (None, True, 42, [], "not-a-native-effort"):
+            settings.write_text(json.dumps({"model": "opus", "effortLevel": effort}))
+            result = self.run_account("claude-sp.openclaw", "-p", "hi")
+            self.assertEqual(result.returncode, 78)
+            self.assertIn("Invalid Claude effortLevel", result.stderr)
+            self.assertEqual(result.stdout, "")
+        settings.write_text('{"model":"opus","effortLevel":"max"}')
+        result = self.run_account("claude-sp.openclaw", "--effort", "high", "-p", "hi",
+                                  env={**self.env, "CLAUDE_CODE_EFFORT_LEVEL": "low"})
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("CLAUDE_CODE_EFFORT_LEVEL", result.stderr)
 
     def test_canonical_provider_overrides_and_claude_api_helpers_are_rejected(self):
         self.assertEqual(self.install().returncode, 0)

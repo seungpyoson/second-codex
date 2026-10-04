@@ -34,6 +34,7 @@ BLOCKED_ENV = {
         "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
         "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
         "CLAUDE_CODE_SIMPLE", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+        "CLAUDE_CODE_EFFORT_LEVEL",
     },
 }
 CODEX_AUTH_CONFIG = {
@@ -60,7 +61,19 @@ def absolute_path(value):
     return Path(value)
 
 
+def normalize_manifest_paths(config):
+    """Use one lexical spelling for both new and previously installed paths."""
+    for key in ("install_root", "bin_dir"):
+        config[key] = str(absolute_path(config[key]))
+    for account in config["accounts"].values():
+        for key in ("home", "executable"):
+            account[key] = str(absolute_path(account[key]))
+        account["shared"] = {name: str(absolute_path(target))
+                             for name, target in account["shared"].items()}
+
+
 def validate_manifest(config, selected=None):
+    normalize_manifest_paths(config)
     require(config["version"] == 1, "Unsupported named-account manifest version")
     homes = set()
     require(bool(config["accounts"]), "accounts is required")
@@ -169,13 +182,16 @@ def model_arguments(account):
     # retain the native last-value behavior. Effort "max" is a CLI-only value.
     defaults = ["--model", settings["model"]]
     if "effortLevel" in settings:
+        require(isinstance(settings["effortLevel"], str)
+                and settings["effortLevel"] in {"low", "medium", "high", "xhigh", "max"},
+                "Invalid Claude effortLevel; expected low, medium, high, xhigh, or max")
         defaults += ["--effort", settings["effortLevel"]]
     return defaults
 
 
 def native_environment(provider, home, command, ambient):
     conflicts = sorted(key for key in BLOCKED_ENV[provider] if ambient.get(key))
-    require(not conflicts, "Unset conflicting authentication/provider variables: " + ", ".join(conflicts))
+    require(not conflicts, "Unset conflicting named-account environment variables: " + ", ".join(conflicts))
     env = dict(ambient)
     env["CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"] = home
     env["NAMED_AGENT_ACCOUNT"] = command
@@ -274,6 +290,7 @@ def install_locked(config):
     batch = str(time.time_ns())
     prior = read_json(installed_manifest) if installed_manifest.exists() else None
     if prior is not None:
+        normalize_manifest_paths(prior)
         require(prior["accounts"].keys() <= config["accounts"].keys(), "Account removal requires explicitly uninstalling its command first")
     for command, account in config["accounts"].items():
         home = Path(account["home"])
@@ -297,7 +314,7 @@ def install_locked(config):
                 is_managed_link = (path.is_symlink() and previous is not None
                                    and previous["home"] == account["home"]
                                    and name in previous["shared"]
-                                   and os.readlink(path) == str(Path(previous["shared"][name])))
+                                   and os.readlink(path) == previous["shared"][name])
                 require(is_approved_file or is_approved_dir or is_managed_link,
                         f"Conflicting profile path: {path}")
                 backup = root / "preserved" / batch / command / name
