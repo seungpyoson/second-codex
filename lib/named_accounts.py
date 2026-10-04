@@ -29,11 +29,11 @@ AUTH_ENV = {
     "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
 }
 BLOCKED_ENV = {
-    "codex": AUTH_ENV | {
+    "codex": {
         "OPENAI_BASE_URL",
         "OPENAI_API_BASE", "CODEX_CHATGPT_BASE_URL", "CHATGPT_BASE_URL",
     },
-    "claude": AUTH_ENV | {
+    "claude": {
         "ANTHROPIC_BASE_URL",
         "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
         "CLAUDE_CODE_USE_ANTHROPIC_AWS",
@@ -170,7 +170,7 @@ def model_arguments(account):
                     and "openai" not in settings.get("model_providers", {}), "Codex must use the built-in OpenAI provider")
         else:
             settings = read_json(path)
-            conflicts = set(settings.get("env", {})) & (BLOCKED_ENV["claude"] | {"CLAUDE_CONFIG_DIR"})
+            conflicts = set(settings.get("env", {})) & (AUTH_ENV | BLOCKED_ENV["claude"] | {"CLAUDE_CONFIG_DIR"})
             require(not conflicts and "apiKeyHelper" not in settings
                     and settings.get("forceLoginMethod", "claudeai") == "claudeai",
                     "Claude settings conflict with native subscription authentication")

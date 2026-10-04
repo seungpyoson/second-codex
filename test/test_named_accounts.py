@@ -30,7 +30,7 @@ class InstalledAccounts(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.env = {key: value for key, value in os.environ.items()
-                    if key not in set.union(*MODULE.BLOCKED_ENV.values())}
+                    if key not in MODULE.AUTH_ENV | set.union(*MODULE.BLOCKED_ENV.values())}
         shared = self.root / "shared"
         shared.mkdir()
         for name, content in {"AGENTS.md": "canonical policy\n", "CLAUDE.md": "@AGENTS.md\n",
@@ -41,12 +41,14 @@ class InstalledAccounts(unittest.TestCase):
                        "bin_dir": str(self.root / "bin"), "accounts": {}}
         for provider in ("codex", "claude"):
             exe = self.root / ("native-" + provider)
-            exe.write_text("#!/usr/bin/env python3\nimport json,os,pathlib,sys\n"
-                           + f"assert not any(k in os.environ for k in {CREDENTIAL_ENV!r}), 'credential environment leaked to native CLI'\n"
+            nested_probe = f"import os,sys; sys.exit(87 if any(k in os.environ for k in {CREDENTIAL_ENV!r}) else 0)"
+            exe.write_text("#!/usr/bin/env python3\nimport json,os,pathlib,subprocess,sys\n"
+                           + f"if any(k in os.environ for k in {CREDENTIAL_ENV!r}): sys.exit(86)\n"
                            + f"home=pathlib.Path(os.environ[{('CODEX_HOME' if provider == 'codex' else 'CLAUDE_CONFIG_DIR')!r}])\n"
                            + "if sys.argv[1:]==['auth','status']:\n"
                            + " print(json.dumps({'loggedIn':True,'authMethod':'claude.ai','apiProvider':'firstParty','email':home.name+'@example.invalid'}))\n"
-                           + "else:\n print(json.dumps({'args':sys.argv[1:],'home':str(home),'account':os.environ['NAMED_AGENT_ACCOUNT']}))\n"
+                           + f"else:\n subprocess.run([sys.executable,'-c',{nested_probe!r}],check=True)\n"
+                           + " print(json.dumps({'args':sys.argv[1:],'home':str(home),'account':os.environ['NAMED_AGENT_ACCOUNT']}))\n"
                            + " if (home/'native-exit').exists(): sys.exit(int((home/'native-exit').read_text()))\n")
             exe.chmod(0o700)
             for identity in NAMES:
@@ -132,7 +134,8 @@ class InstalledAccounts(unittest.TestCase):
 
     def test_named_subscriptions_isolate_ambient_credentials_without_changing_caller(self):
         self.assertEqual(self.install().returncode, 0)
-        ambient = {**self.env, **{name: "SYNTHETIC-NEVER-PRINT" for name in CREDENTIAL_ENV}}
+        ambient = {**self.env, "PYTHONOPTIMIZE": "1",
+                   **{name: "SYNTHETIC-NEVER-PRINT" for name in CREDENTIAL_ENV}}
         before = dict(ambient)
         for command in self.config["accounts"]:
             args = ["exec", "hi"] if command.startswith("codex-") else ["-p", "hi"]
@@ -146,6 +149,12 @@ class InstalledAccounts(unittest.TestCase):
         home = Path(self.config["accounts"]["codex-seungpyoson"]["home"])
         (home / "auth.json").unlink()
         result = self.run_account("codex-seungpyoson", "exec", "hi", env=ambient)
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("Not signed in", result.stderr)
+        self.assertEqual(result.stdout, "")
+        exe = self.root / "native-claude"
+        exe.write_text(exe.read_text().replace("'loggedIn':True", "'loggedIn':False"))
+        result = self.run_account("claude-sp.openclaw", "-p", "hi", env=ambient)
         self.assertEqual(result.returncode, 78)
         self.assertIn("Not signed in", result.stderr)
         self.assertEqual(result.stdout, "")

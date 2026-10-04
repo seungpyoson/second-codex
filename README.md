@@ -76,6 +76,10 @@ Ambient Codex and Claude API-key/access-token selectors are removed only from
 the launched process environment, so exported credentials for other Terminal
 tools cannot select billing for these subscription commands. The caller's
 environment is unchanged. Missing native logins still stop the launch.
+Child processes, including hooks, MCP servers, shell commands, and nested
+coding agents, also inherit this environment without either provider's API
+credentials. This prevents nested tools from inheriting those credentials.
+Claude settings cannot reintroduce either provider's credentials through `env`.
 Explicit API-login/provider options, settings-based authentication overrides,
 and conflicting endpoint/backend environment variables are rejected with their
 names, without printing their values.
