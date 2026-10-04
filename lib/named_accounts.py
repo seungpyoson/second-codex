@@ -161,11 +161,13 @@ def model_arguments(account):
     settings = parsed[0]
     require(isinstance(settings["model"], str) and bool(settings["model"]), "An authoritative model is required")
     if provider == "codex":
-        return ["--model", settings["model"], "-c", "model_reasoning_effort=" + json.dumps(settings["model_reasoning_effort"])]
-    result = ["--model", settings["model"]]
+        # Config overrides are repeatable; --model is not. Native --model and
+        # later user config overrides therefore keep their normal precedence.
+        return ["-c", "model=" + json.dumps(settings["model"]), "-c", "model_reasoning_effort=" + json.dumps(settings["model_reasoning_effort"])]
+    defaults = {"model": settings["model"]}
     if "effortLevel" in settings:
-        result += ["--effort", settings["effortLevel"]]
-    return result
+        defaults["effortLevel"] = settings["effortLevel"]
+    return ["--settings", json.dumps(defaults)]
 
 
 def native_environment(provider, home, command, ambient):
@@ -216,11 +218,12 @@ def authentication_action(provider, args):
                    "-a", "--ask-for-approval", "--enable", "--disable"}
     i = 0
     while i < len(args) and args[i].startswith("-"):
-        if args[i] == "--":
+        flag = args[i].split("=", 1)[0]
+        if flag not in valued:
+            # Unknown options can consume the next token. Never mistake an
+            # option value such as "auth" for a native authentication command.
             return False, False
-        if provider == "claude" and args[i] in {"-p", "--print"}:
-            return False, False
-        i += 2 if args[i] in valued else 1
+        i += 1 if "=" in args[i] else 2
     tail = args[i:]
     if provider == "codex":
         return bool(tail) and tail[0] in {"login", "logout"}, tail == ["login", "status"]
@@ -243,7 +246,7 @@ def launch(config, command, args):
         identity = authenticated_identity(account, env)
         login = "login" if provider == "codex" else "auth login --claudeai"
         require(identity is not None, f"Not signed in. Run: {command} {login}")
-        require(isinstance(identity, str) and identity.rsplit("@", 1)[0] == command.split("-", 1)[1],
+        require(isinstance(identity, str) and identity.rsplit("@", 1)[0].lower() == command.split("-", 1)[1],
                 f"Saved login does not match {command}; use its native logout/login commands")
     os.execve(account["executable"], [account["executable"], *native_args], env)
 
@@ -287,7 +290,12 @@ def install_locked(config):
                                     and hashlib.sha256(path.read_bytes()).hexdigest() == approved)
                 is_approved_dir = (path.is_dir() and not path.is_symlink() and approved_dir is not None
                                    and [path.stat().st_dev, path.stat().st_ino] == approved_dir)
-                require(is_approved_file or is_approved_dir,
+                previous = prior["accounts"].get(command) if prior is not None else None
+                is_managed_link = (path.is_symlink() and previous is not None
+                                   and previous["home"] == account["home"]
+                                   and name in previous["shared"]
+                                   and os.readlink(path) == previous["shared"][name])
+                require(is_approved_file or is_approved_dir or is_managed_link,
                         f"Conflicting profile path: {path}")
                 backup = root / "preserved" / batch / command / name
                 require(not backup.exists(), f"Backup already exists: {backup}")

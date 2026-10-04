@@ -55,7 +55,7 @@ into the same backup area. Only names in `shared` can be migrated.
 Installation serializes mutations and restores migrated files and installation
 metadata if a later operation fails. All restoration steps are attempted even
 if one fails, and failures are reported together. A failed installation may
-leave empty directories; it never reports success. Re-running with a revised
+leave empty directories and its lock file; it never reports success. Re-running with a revised
 manifest can add accounts or correct paths; removing command names is rejected
 so an existing managed command is not silently orphaned. The installed
 launcher pins the Python executable used for installation.
@@ -84,7 +84,9 @@ same reviewed source before installing named profiles into its second home:
 `bash install.sh`. Native profile settings may diverge for local preferences;
 the named launcher still takes model defaults from the canonical source and
 rejects stale policy files. Share the same authoritative settings and policy
-sources when configuring both launch paths.
+sources when configuring both launch paths. The legacy projector rejects
+missing or different shared targets before projection rather than replacing
+those references.
 
 Focused verification (uses synthetic credentials and fake CLIs):
 

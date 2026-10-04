@@ -1,6 +1,7 @@
 """Exercise installed commands in separate processes using synthetic CLI/auth fixtures."""
 
 import base64
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -134,11 +135,55 @@ class InstalledAccounts(unittest.TestCase):
         self.assertEqual((bindir / "claude-soongikwon").read_text(), "existing user command")
         self.assertFalse((Path(self.config["accounts"]["codex-seungpyoson"]["home"]) / "AGENTS.md").exists())
 
-    def test_identical_or_symlinked_homes_rejected(self):
+    def test_identical_homes_rejected(self):
         self.config["accounts"]["codex-soongikwon"]["home"] = self.config["accounts"]["codex-seungpyoson"]["home"]
         self.save()
         self.assertEqual(self.install().returncode, 78)
         self.assertFalse((self.root / "bin").exists())
+
+    def test_symlinked_home_rejected(self):
+        account = self.config["accounts"]["codex-seungpyoson"]
+        home = Path(account["home"])
+        moved = self.root / "real-home"
+        home.rename(moved)
+        home.symlink_to(moved)
+        self.assertEqual(self.install().returncode, 78)
+        self.assertFalse((self.root / "bin").exists())
+
+    def test_file_approval_cannot_replace_changed_content(self):
+        account = self.config["accounts"]["codex-seungpyoson"]
+        path = Path(account["home"]) / "AGENTS.md"
+        path.write_bytes(b"new unapproved contents")
+        account["replace_sha256"]["AGENTS.md"] = hashlib.sha256(b"old approved contents").hexdigest()
+        self.save()
+        self.assertEqual(self.install().returncode, 78)
+        self.assertEqual(path.read_bytes(), b"new unapproved contents")
+
+    def test_concurrent_installer_is_rejected_before_profile_mutation(self):
+        root = Path(self.config["install_root"])
+        root.mkdir()
+        with (root / ".install.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(self.install().returncode, 78)
+        self.assertFalse((self.root / "bin").exists())
+        self.assertEqual(self.install().returncode, 0)
+
+    def test_account_removal_is_rejected_without_changing_manifest(self):
+        self.assertEqual(self.install().returncode, 0)
+        installed = Path(self.config["install_root"]) / "accounts.json"
+        before = installed.read_bytes()
+        del self.config["accounts"]["codex-seungpyoson"]
+        self.save()
+        self.assertEqual(self.install().returncode, 78)
+        self.assertEqual(installed.read_bytes(), before)
+
+    def test_api_key_auth_file_is_rejected_without_printing_key(self):
+        self.assertEqual(self.install().returncode, 0)
+        path = Path(self.config["accounts"]["codex-seungpyoson"]["home"]) / "auth.json"
+        path.write_text('{"OPENAI_API_KEY":"synthetic-never-print"}')
+        result = self.run_account("codex-seungpyoson", "exec", "hi")
+        self.assertEqual(result.returncode, 78)
+        self.assertNotIn("synthetic-never-print", result.stdout + result.stderr)
 
     def test_approved_config_migration_preserves_original_and_auth(self):
         account = self.config["accounts"]["codex-spson.engineering"]
@@ -218,6 +263,26 @@ class InstalledAccounts(unittest.TestCase):
         self.assertEqual(self.run_account(command, "exec", "synthetic").returncode, 0)
         self.assertEqual(self.install().returncode, 0)
 
+        skills = primary / "skills"
+        moved = self.root / "moved-skills"
+        skills.rename(moved)
+        # A missing primary target is rejected without deleting the reference.
+        result = subprocess.run([str(SOURCE.parents[1] / "second-codex"), "exec", "synthetic"],
+                                env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertTrue((Path(account["home"]) / "skills").is_symlink())
+        moved.rename(skills)
+        # A different existing target is rejected as well.
+        other = self.root / "other-skills"
+        other.mkdir()
+        linked = Path(account["home"]) / "skills"
+        linked.unlink()
+        linked.symlink_to(other)
+        result = subprocess.run([str(SOURCE.parents[1] / "second-codex"), "exec", "synthetic"],
+                                env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertEqual(linked.resolve(), other.resolve())
+
     def test_claude_empty_and_wrong_login_are_rejected(self):
         self.assertEqual(self.install().returncode, 0)
         exe = self.root / "native-claude"
@@ -236,18 +301,61 @@ class InstalledAccounts(unittest.TestCase):
         path.write_text('model="local-choice"\nmodel_reasoning_effort="low"\n[projects."example"]\ntrust_level="trusted"\n')
         result = self.run_account("codex-spson.engineering", "exec", "hi")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("configured-model", json.loads(result.stdout)["args"])
+        self.assertIn('model="configured-model"', json.loads(result.stdout)["args"])
         self.assertIn('model_reasoning_effort="max"', json.loads(result.stdout)["args"])
         self.assertEqual(self.install().returncode, 0)
         self.assertIn("trust_level", path.read_text())
 
-    def test_changed_install_manifest_and_interrupted_metadata_are_recoverable(self):
+    def test_changed_install_manifest_can_move_command_directory(self):
         self.assertEqual(self.install().returncode, 0)
-        (self.root / "installed/named_accounts.py.installing").write_text("abandoned old attempt")
         self.config["bin_dir"] = str(self.root / "new-bin")
         self.save()
         self.assertEqual(self.install().returncode, 0)
         self.assertTrue((self.root / "new-bin/codex-seungpyoson").is_symlink())
+
+    def test_moved_shared_source_retargets_only_owned_links(self):
+        self.assertEqual(self.install().returncode, 0)
+        source = self.root / "shared"
+        moved = self.root / "shared-moved"
+        source.rename(moved)
+        for account in self.config["accounts"].values():
+            account["shared"] = {name: str(moved / name) for name in account["shared"]}
+        self.save()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.run_account("codex-seungpyoson", "exec", "hi").returncode, 0)
+        path = Path(self.config["accounts"]["codex-seungpyoson"]["home"]) / "AGENTS.md"
+        path.unlink()
+        path.symlink_to(self.root / "unowned-target")
+        self.assertEqual(self.install().returncode, 78)
+
+    def test_model_defaults_do_not_duplicate_native_model_option(self):
+        self.assertEqual(self.install().returncode, 0)
+        result = self.run_account("codex-seungpyoson", "--model", "explicit-model", "exec", "hi")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = json.loads(result.stdout)["args"]
+        self.assertEqual(args.count("--model"), 1)
+        self.assertIn('model="configured-model"', args)
+
+    def test_option_values_cannot_bypass_identity_check(self):
+        self.assertEqual(self.install().returncode, 0)
+        exe = self.root / "native-claude"
+        exe.write_text("#!/usr/bin/env python3\nprint('{\"loggedIn\":false}')\n")
+        for option in ("--append-system-prompt", "--unknown-future-option"):
+            result = self.run_account("claude-sp.openclaw", option, "auth", "task")
+            self.assertEqual(result.returncode, 78, result.stderr)
+            self.assertIn("Not signed in", result.stderr)
+
+    def test_claude_model_effort_defaults_and_case_normalized_identity(self):
+        (self.root / "shared/settings.json").write_text('{"model":"opus","effortLevel":"max"}')
+        self.assertEqual(self.install().returncode, 0)
+        exe = self.root / "native-claude"
+        exe.write_text(exe.read_text().replace("home.name+'@example.invalid'", "home.name.upper()+'@example.invalid'"))
+        result = self.run_account("claude-sp.openclaw", "--model", "explicit", "--effort", "high", "-p", "hi")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = json.loads(result.stdout)["args"]
+        self.assertEqual(args.count("--model"), 1)
+        self.assertEqual(json.loads(args[args.index("--settings") + 1]), {"model": "opus", "effortLevel": "max"})
 
     def test_canonical_provider_overrides_and_claude_api_helpers_are_rejected(self):
         self.assertEqual(self.install().returncode, 0)

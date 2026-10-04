@@ -680,7 +680,11 @@ sync_projection() {
   # links with copies, making the two launch paths disagree about ownership.
   for pattern in "${ENVIRONMENT_PATTERNS[@]}"; do
     local entry="${pattern%/}"
-    if [[ -L "$B_HOME/$entry" && "$B_HOME/$entry" -ef "$A_HOME/$entry" ]]; then
+    if [[ -L "$B_HOME/$entry" ]]; then
+      if [[ ! "$B_HOME/$entry" -ef "$A_HOME/$entry" ]]; then
+        echo "second-codex: shared reference disagrees with primary: $B_HOME/$entry" >&2
+        return 78
+      fi
       excludes+=(--exclude="/$pattern")
     fi
   done
