@@ -37,17 +37,28 @@ Install from a private JSON manifest with these required fields:
 ```
 
 Claude entries use `provider: "claude"` and require `AGENTS.md`, `CLAUDE.md`,
-and `settings.json` in `shared`. Shared entries are linked by reference.
+and `settings.json` in `shared`. Shared entries are initially linked by reference.
+Native settings files may subsequently be replaced by the CLI when it saves
+project trust or UI preferences. Those native writes are retained; model
+defaults always come from the canonical source at launch (Codex requires both
+`model` and `model_reasoning_effort`; Claude requires `model` and uses an
+explicit `effortLevel` when configured). Explicit native model arguments still
+override those defaults. Agent policy and shared directories retain their
+canonical references.
 Credentials, session history, databases, and other runtime paths cannot be
 listed there. Existing files conflict unless their exact SHA-256 is explicitly
 listed in `replace_sha256`; approved files are moved into the installation's
-`preserved/<command>/` directory before links are installed. Policy contents
+`preserved/<installation-batch>/<command>/` directory before links are installed. Policy contents
 are never edited. Existing configuration directories require their exact
 `[st_dev, st_ino]` pair in `replace_directory_identity` and are moved intact
 into the same backup area. Only names in `shared` can be migrated.
-Installation serializes mutations and restores migrated
-files if a later operation fails. A failed installation may leave empty
-directories and installation metadata; it never reports success.
+Installation serializes mutations and restores migrated files and installation
+metadata if a later operation fails. All restoration steps are attempted even
+if one fails, and failures are reported together. A failed installation may
+leave empty directories; it never reports success. Re-running with a revised
+manifest can add accounts or correct paths; removing command names is rejected
+so an existing managed command is not silently orphaned. The installed
+launcher pins the Python executable used for installation.
 
 ```bash
 python3 lib/named_accounts.py install /absolute/path/to/accounts.json
@@ -67,10 +78,13 @@ first-party `claude.ai` authentication before inference. The launchers do not
 change permission modes, remove hooks, or substitute models.
 
 The existing `codex`, `claude`, and `second-codex` commands remain available.
-The legacy second-account projector may replace configuration links with
-current copies; a named launcher accepts byte-identical files and rejects
-stale ones. Share the same authoritative settings and policy sources when
-configuring both launch paths.
+The updated legacy second-account projector preserves links to the primary's
+configuration and shared directories. Update the legacy installation from the
+same reviewed source before installing named profiles into its second home:
+`bash install.sh`. Native profile settings may diverge for local preferences;
+the named launcher still takes model defaults from the canonical source and
+rejects stale policy files. Share the same authoritative settings and policy
+sources when configuring both launch paths.
 
 Focused verification (uses synthetic credentials and fake CLIs):
 

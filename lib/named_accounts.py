@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import time
 import tomllib
 
 
@@ -36,8 +38,9 @@ BLOCKED_ENV = {
 }
 CODEX_AUTH_CONFIG = {
     "model_provider", "model_providers", "forced_login_method",
-    "cli_auth_credentials_store", "openai_base_url", "chatgpt_base_url",
+    "cli_auth_credentials_store", "openai_base_url", "chatgpt_base_url", "profile", "profiles",
 }
+NATIVE_SETTINGS = {"config.toml", "settings.json"}
 
 
 def require(condition, message):
@@ -57,7 +60,7 @@ def absolute_path(value):
     return Path(value)
 
 
-def validate_manifest(config):
+def validate_manifest(config, selected=None):
     require(config["version"] == 1, "Unsupported named-account manifest version")
     homes = set()
     require(bool(config["accounts"]), "accounts is required")
@@ -70,13 +73,15 @@ def validate_manifest(config):
         require(home not in homes, "Each command must have a distinct native home")
         homes.add(home)
         executable = absolute_path(account["executable"])
-        require(executable.is_file() and os.access(executable, os.X_OK), f"Missing CLI: {executable}")
         links = account["shared"]
         required = {"AGENTS.md", "config.toml"} if account["provider"] == "codex" else {
             "AGENTS.md", "CLAUDE.md", "settings.json",
         }
         require(required <= links.keys(), f"{name}: missing required shared configuration")
         require(links.keys() <= SHARED_NAMES, "Credentials/runtime paths cannot be shared")
+        if selected is not None and name != selected:
+            continue
+        require(executable.is_file() and os.access(executable, os.X_OK), f"Missing CLI: {executable}")
         for target in links.values():
             require(absolute_path(target).exists(), f"Missing shared source: {target}")
 
@@ -91,7 +96,11 @@ def verify_shared(account):
         if path.resolve() == target.resolve():
             require(path.exists(), f"Missing shared configuration: {path}")
         elif path.is_file() and target.is_file():
-            require(path.read_bytes() == target.read_bytes(), f"Stale configuration: {path}; rerun the named-account installer")
+            # Native tools atomically replace their settings files (for example,
+            # project trust and UI choices). Model defaults remain authoritative
+            # in the shared source and are passed explicitly at launch.
+            if name not in NATIVE_SETTINGS:
+                require(path.read_bytes() == target.read_bytes(), f"Stale configuration: {path}; repair its shared reference")
         else:
             raise ProfileError(f"Shared configuration is not linked to its source: {path}")
 
@@ -101,6 +110,8 @@ def prepare_arguments(provider, args):
         "--console", "--bare", "--settings", "--setting-sources",
     }
     for i, arg in enumerate(args):
+        if arg == "--":
+            break
         flag = arg.split("=", 1)[0]
         require(flag not in blocked, f"{flag} conflicts with a named subscription profile")
         if provider == "codex":
@@ -123,6 +134,38 @@ def prepare_arguments(provider, args):
         return ["--no-daemon", "-c", 'forced_login_method="chatgpt"',
                 "-c", 'cli_auth_credentials_store="file"', "-c", 'model_provider="openai"', *args]
     return args
+
+
+def model_arguments(account):
+    provider = account["provider"]
+    name = "config.toml" if provider == "codex" else "settings.json"
+    source, native = Path(account["shared"][name]), Path(account["home"]) / name
+    parsed = []
+    for path in (source, native):
+        if provider == "codex":
+            try:
+                settings = tomllib.loads(path.read_text())
+            except (OSError, ValueError):
+                raise ProfileError(f"Invalid native settings: {path}") from None
+            require(not any(key in settings for key in ("profile", "profiles", "openai_base_url", "chatgpt_base_url")),
+                    "Codex account profiles cannot set alternate profiles or service URLs")
+            require(settings.get("model_provider", "openai") == "openai"
+                    and "openai" not in settings.get("model_providers", {}), "Codex must use the built-in OpenAI provider")
+        else:
+            settings = read_json(path)
+            conflicts = set(settings.get("env", {})) & (BLOCKED_ENV["claude"] | {"CLAUDE_CONFIG_DIR"})
+            require(not conflicts and "apiKeyHelper" not in settings
+                    and settings.get("forceLoginMethod", "claudeai") == "claudeai",
+                    "Claude settings conflict with native subscription authentication")
+        parsed.append(settings)
+    settings = parsed[0]
+    require(isinstance(settings["model"], str) and bool(settings["model"]), "An authoritative model is required")
+    if provider == "codex":
+        return ["--model", settings["model"], "-c", "model_reasoning_effort=" + json.dumps(settings["model_reasoning_effort"])]
+    result = ["--model", settings["model"]]
+    if "effortLevel" in settings:
+        result += ["--effort", settings["effortLevel"]]
+    return result
 
 
 def native_environment(provider, home, command, ambient):
@@ -165,19 +208,37 @@ def authenticated_identity(account, env):
         raise ProfileError("Cannot verify native Claude authentication status") from None
 
 
+def authentication_action(provider, args):
+    """Recognize native auth subcommands after supported leading CLI options."""
+    valued = {"--model", "--add-dir", "--effort", "--agent"}
+    if provider == "codex":
+        valued |= {"-m", "-c", "--config", "-C", "--cd", "-s", "--sandbox",
+                   "-a", "--ask-for-approval", "--enable", "--disable"}
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "--":
+            return False, False
+        if provider == "claude" and args[i] in {"-p", "--print"}:
+            return False, False
+        i += 2 if args[i] in valued else 1
+    tail = args[i:]
+    if provider == "codex":
+        return bool(tail) and tail[0] in {"login", "logout"}, tail == ["login", "status"]
+    return bool(tail) and tail[0] == "auth", tail == ["auth", "status"]
+
+
 def launch(config, command, args):
-    validate_manifest(config)
     require(command in config["accounts"], "Unknown named account")
+    validate_manifest(config, selected=command)
     account = config["accounts"][command]
     verify_shared(account)
     provider = account["provider"]
     env = native_environment(provider, account["home"], command, os.environ)
-    native_args = prepare_arguments(provider, args)
+    native_args = model_arguments(account) + prepare_arguments(provider, args)
     is_help = args in (["--help"], ["-h"], ["--version"], ["-V"])
-    is_auth = bool(args) and (args[0] in {"login", "logout"} if provider == "codex" else args[0] == "auth")
+    is_auth, is_status = authentication_action(provider, args)
     # Native login/logout must remain available to connect or correct an account.
     # Status and ordinary launches still verify the account label.
-    is_status = args == ["login", "status"] if provider == "codex" else args == ["auth", "status"]
     if not is_help and (not is_auth or is_status):
         identity = authenticated_identity(account, env)
         login = "login" if provider == "codex" else "auth login --claudeai"
@@ -204,6 +265,10 @@ def install_locked(config):
     installed_manifest = root / "accounts.json"
     source = Path(__file__).resolve()
     replacements, links = [], []
+    batch = str(time.time_ns())
+    prior = read_json(installed_manifest) if installed_manifest.exists() else None
+    if prior is not None:
+        require(prior["accounts"].keys() <= config["accounts"].keys(), "Account removal requires explicitly uninstalling its command first")
     for command, account in config["accounts"].items():
         home = Path(account["home"])
         require(not home.is_symlink(), f"Native home must not be a symlink: {home}")
@@ -212,6 +277,10 @@ def install_locked(config):
             if path.resolve() == Path(target).resolve():
                 continue
             if path.exists() or path.is_symlink():
+                if (prior is not None and command in prior["accounts"] and name in NATIVE_SETTINGS
+                        and path.is_file() and not path.is_symlink()
+                        and prior["accounts"][command]["home"] == account["home"]):
+                    continue
                 approved = account["replace_sha256"].get(name)
                 approved_dir = account["replace_directory_identity"].get(name)
                 is_approved_file = (path.is_file() and not path.is_symlink() and approved is not None
@@ -220,20 +289,18 @@ def install_locked(config):
                                    and [path.stat().st_dev, path.stat().st_ino] == approved_dir)
                 require(is_approved_file or is_approved_dir,
                         f"Conflicting profile path: {path}")
-                backup = root / "preserved" / command / name
+                backup = root / "preserved" / batch / command / name
                 require(not backup.exists(), f"Backup already exists: {backup}")
                 replacements.append((path, backup))
             links.append((path, Path(target)))
         entry = bin_dir / command
         require(not (entry.exists() or entry.is_symlink()) or (entry.is_symlink() and entry.resolve() == script.resolve()),
                 f"Conflicting command: {entry}")
-    if installed_manifest.exists():
-        require(read_json(installed_manifest) == config, "Installed manifest differs; explicit migration is required")
     # Validate every conflict before touching any profile. Existing credentials
     # and runtime paths are never part of the operation.
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     bin_dir.mkdir(parents=True, exist_ok=True)
-    created, moved = [], []
+    created, moved, metadata = [], [], []
     try:
         for account in config["accounts"].values():
             Path(account["home"]).mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -244,26 +311,55 @@ def install_locked(config):
         for path, target in links:
             path.symlink_to(target, target_is_directory=target.is_dir())
             created.append(path)
-        for target, content, mode in [(script, source.read_bytes(), 0o700),
-                                      (installed_manifest, (json.dumps(config, indent=2) + "\n").encode(), 0o600)]:
-            temporary = target.with_name(target.name + ".installing")
-            with temporary.open("xb") as stream:
-                stream.write(content)
-            temporary.chmod(mode)
-            temporary.replace(target)
         for command in config["accounts"]:
             entry = bin_dir / command
             if not entry.is_symlink():
                 entry.symlink_to(script)
                 created.append(entry)
-    except BaseException:
+        require(not any(c.isspace() for c in sys.executable), "Python executable path cannot contain whitespace")
+        script_bytes = ("#!" + sys.executable + "\n").encode() + source.read_bytes().split(b"\n", 1)[1]
+        for target, content, mode in [(script, script_bytes, 0o700),
+                                      (installed_manifest, (json.dumps(config, indent=2) + "\n").encode(), 0o600)]:
+            old = (target.read_bytes(), target.stat().st_mode & 0o777) if target.exists() else None
+            metadata.append((target, old))
+            atomic_write(target, content, mode)
+    except BaseException as failure:
+        cleanup = []
+        for target, old in reversed(metadata):
+            try:
+                if old is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    atomic_write(target, old[0], old[1])
+            except OSError as error:
+                cleanup.append(error)
         for path in reversed(created):
-            path.unlink()
+            try:
+                path.unlink()
+            except OSError as error:
+                cleanup.append(error)
         for path, backup in reversed(moved):
-            backup.rename(path)
+            try:
+                backup.rename(path)
+            except OSError as error:
+                cleanup.append(error)
+        if cleanup:
+            raise BaseExceptionGroup("Installation failed; rollback also encountered errors", [failure, *cleanup])
         raise
     print(json.dumps({"installed": list(config["accounts"]), "install_root": str(root),
                       "preserved": [str(backup) for _, backup in moved]}))
+
+
+def atomic_write(target, content, mode):
+    fd, temporary_name = tempfile.mkstemp(prefix=target.name + ".install-", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+        temporary.chmod(mode)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def main():
@@ -272,8 +368,11 @@ def main():
         if name == "named_accounts.py" and len(sys.argv) == 3 and sys.argv[1] == "install":
             install(Path(sys.argv[2]))
         else:
-            config = read_json(Path(__file__).resolve().with_name("accounts.json"))
-            launch(config, name, sys.argv[1:])
+            root = Path(__file__).resolve().parent
+            with (root / ".install.lock").open("r") as lock:
+                fcntl.flock(lock, fcntl.LOCK_SH)
+                config = read_json(root / "accounts.json")
+                launch(config, name, sys.argv[1:])
     except (ProfileError, KeyError, OSError, subprocess.TimeoutExpired) as error:
         print(f"named account: {error}", file=sys.stderr)
         raise SystemExit(78)

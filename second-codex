@@ -675,6 +675,15 @@ sync_projection() {
   for pattern in "${ACCOUNT_PATTERNS[@]}"; do
     excludes+=(--exclude="/$pattern")
   done
+  # Named native accounts share configuration by reference. Preserve references
+  # to the primary's actual object; rsync would otherwise replace directory
+  # links with copies, making the two launch paths disagree about ownership.
+  for pattern in "${ENVIRONMENT_PATTERNS[@]}"; do
+    local entry="${pattern%/}"
+    if [[ -L "$B_HOME/$entry" && "$B_HOME/$entry" -ef "$A_HOME/$entry" ]]; then
+      excludes+=(--exclude="/$pattern")
+    fi
+  done
   rsync -a --delete "${excludes[@]}" "$A_HOME/" "$B_HOME/" || return $?
 }
 
