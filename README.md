@@ -1,5 +1,87 @@
 # Second Codex Account
 
+## Named native terminal accounts
+
+`lib/named_accounts.py` installs named entrypoints for the native Codex and
+Claude Code CLIs. Each name selects a distinct native home; it does not route
+through a gateway or move credentials between homes. Python 3.11+ and a
+Unix-like system are required.
+
+The command suffix is the expected email local part. For example,
+`codex-spson.engineering` accepts a saved login whose email starts with
+`spson.engineering@`. The launcher checks identity before ordinary runs and
+status requests. Provider-side authentication remains the native CLI's job.
+An expired or revoked subscription may still require a new login.
+
+Install from a private JSON manifest with these required fields:
+
+```json
+{
+  "version": 1,
+  "install_root": "/absolute/path/to/named-accounts",
+  "bin_dir": "/absolute/path/already/on/PATH",
+  "accounts": {
+    "codex-personal": {
+      "provider": "codex",
+      "home": "/absolute/path/to/codex-personal",
+      "executable": "/absolute/path/to/codex",
+      "shared": {
+        "config.toml": "/absolute/path/to/canonical/config.toml",
+        "AGENTS.md": "/absolute/path/to/canonical/AGENTS.md"
+      },
+      "replace_sha256": {},
+      "replace_directory_identity": {}
+    }
+  }
+}
+```
+
+Claude entries use `provider: "claude"` and require `AGENTS.md`, `CLAUDE.md`,
+and `settings.json` in `shared`. Shared entries are linked by reference.
+Credentials, session history, databases, and other runtime paths cannot be
+listed there. Existing files conflict unless their exact SHA-256 is explicitly
+listed in `replace_sha256`; approved files are moved into the installation's
+`preserved/<command>/` directory before links are installed. Policy contents
+are never edited. Existing configuration directories require their exact
+`[st_dev, st_ino]` pair in `replace_directory_identity` and are moved intact
+into the same backup area. Only names in `shared` can be migrated.
+Installation serializes mutations and restores migrated
+files if a later operation fails. A failed installation may leave empty
+directories and installation metadata; it never reports success.
+
+```bash
+python3 lib/named_accounts.py install /absolute/path/to/accounts.json
+codex-personal login
+codex-personal
+claude-personal auth login --claudeai
+claude-personal
+```
+
+Use the exact names present in your manifest. Ordinary CLI arguments pass
+through, including prompts, model selection, and native resume commands.
+Subscription-conflicting environment variables and authentication/provider
+overrides are rejected with their names, without printing their values.
+Codex uses file-based native credentials, the built-in OpenAI provider, ChatGPT
+login, and a separate foreground runtime (`--no-daemon`). Claude must report
+first-party `claude.ai` authentication before inference. The launchers do not
+change permission modes, remove hooks, or substitute models.
+
+The existing `codex`, `claude`, and `second-codex` commands remain available.
+The legacy second-account projector may replace configuration links with
+current copies; a named launcher accepts byte-identical files and rejects
+stale ones. Share the same authoritative settings and policy sources when
+configuring both launch paths.
+
+Focused verification (uses synthetic credentials and fake CLIs):
+
+```bash
+python3 -m unittest discover -s test -p 'test_named_accounts.py' -v
+```
+
+Native subscription requests, macOS Keychain isolation, and persistence across
+real account sign-ins require separate live verification. Test results from
+the synthetic suite do not prove those behaviors.
+
 `second-codex` runs Codex with the second ChatGPT subscription account while keeping the primary Codex environment as the single source of truth.
 
 ## Homes
