@@ -19,6 +19,9 @@ SPEC = importlib.util.spec_from_file_location("named_accounts", SOURCE)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 NAMES = ("seungpyoson", "spson.engineering", "sp.openclaw", "soongikwon")
+CREDENTIAL_ENV = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN",
+                  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+                  "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR")
 
 
 class InstalledAccounts(unittest.TestCase):
@@ -39,6 +42,7 @@ class InstalledAccounts(unittest.TestCase):
         for provider in ("codex", "claude"):
             exe = self.root / ("native-" + provider)
             exe.write_text("#!/usr/bin/env python3\nimport json,os,pathlib,sys\n"
+                           + f"assert not any(k in os.environ for k in {CREDENTIAL_ENV!r}), 'credential environment leaked to native CLI'\n"
                            + f"home=pathlib.Path(os.environ[{('CODEX_HOME' if provider == 'codex' else 'CLAUDE_CONFIG_DIR')!r}])\n"
                            + "if sys.argv[1:]==['auth','status']:\n"
                            + " print(json.dumps({'loggedIn':True,'authMethod':'claude.ai','apiProvider':'firstParty','email':home.name+'@example.invalid'}))\n"
@@ -120,11 +124,31 @@ class InstalledAccounts(unittest.TestCase):
         for command, args in cases:
             result = self.run_account(command, *args)
             self.assertEqual(result.returncode, 78, result.stdout)
-        for command, variable in [("codex-seungpyoson", "OPENAI_API_KEY"), ("claude-sp.openclaw", "ANTHROPIC_API_KEY")]:
+        for command, variable in [("codex-seungpyoson", "OPENAI_BASE_URL"), ("claude-sp.openclaw", "ANTHROPIC_BASE_URL")]:
             result = self.run_account(command, "--version", env={**self.env, variable: "DO-NOT-PRINT-ME"})
             self.assertEqual(result.returncode, 78)
             self.assertIn(variable, result.stderr)
             self.assertNotIn("DO-NOT-PRINT-ME", result.stderr + result.stdout)
+
+    def test_named_subscriptions_isolate_ambient_credentials_without_changing_caller(self):
+        self.assertEqual(self.install().returncode, 0)
+        ambient = {**self.env, **{name: "SYNTHETIC-NEVER-PRINT" for name in CREDENTIAL_ENV}}
+        before = dict(ambient)
+        for command in self.config["accounts"]:
+            args = ["exec", "hi"] if command.startswith("codex-") else ["-p", "hi"]
+            result = self.run_account(command, *args, env=ambient)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("SYNTHETIC-NEVER-PRINT", result.stdout + result.stderr)
+            provider = self.config["accounts"][command]["provider"]
+            child = MODULE.native_environment(provider, "/synthetic/profile", command, ambient)
+            self.assertFalse(set(CREDENTIAL_ENV) & child.keys())
+        self.assertEqual(ambient, before)
+        home = Path(self.config["accounts"]["codex-seungpyoson"]["home"])
+        (home / "auth.json").unlink()
+        result = self.run_account("codex-seungpyoson", "exec", "hi", env=ambient)
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("Not signed in", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_conflicting_entrypoint_is_detected_before_any_profile_mutation(self):
         bindir = self.root / "bin"

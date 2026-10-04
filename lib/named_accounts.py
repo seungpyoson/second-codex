@@ -23,16 +23,20 @@ SHARED_NAMES = {
     "AGENTS.md", "CLAUDE.md", "config.toml", "settings.json", "skills",
     "rules", "commands", "agents", "hooks.json", "plugins",
 }
+AUTH_ENV = {
+    "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+}
 BLOCKED_ENV = {
-    "codex": {
-        "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL",
+    "codex": AUTH_ENV | {
+        "OPENAI_BASE_URL",
         "OPENAI_API_BASE", "CODEX_CHATGPT_BASE_URL", "CHATGPT_BASE_URL",
     },
-    "claude": {
-        "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-        "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+    "claude": AUTH_ENV | {
+        "ANTHROPIC_BASE_URL",
         "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
-        "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+        "CLAUDE_CODE_USE_ANTHROPIC_AWS",
         "CLAUDE_CODE_SIMPLE", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
         "CLAUDE_CODE_EFFORT_LEVEL",
     },
@@ -190,9 +194,12 @@ def model_arguments(account):
 
 
 def native_environment(provider, home, command, ambient):
-    conflicts = sorted(key for key in BLOCKED_ENV[provider] if ambient.get(key))
+    # Named subscription commands always use saved native authentication. Strip
+    # ambient credential selectors for both CLIs from this child environment;
+    # the caller and other Terminal applications keep their original values.
+    env = {key: value for key, value in ambient.items() if key not in AUTH_ENV}
+    conflicts = sorted(key for key in BLOCKED_ENV[provider] if env.get(key))
     require(not conflicts, "Unset conflicting named-account environment variables: " + ", ".join(conflicts))
-    env = dict(ambient)
     env["CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"] = home
     env["NAMED_AGENT_ACCOUNT"] = command
     if provider == "codex":

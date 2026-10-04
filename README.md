@@ -72,8 +72,13 @@ claude-personal
 
 Use the exact names present in your manifest. Ordinary CLI arguments pass
 through, including prompts, model selection, and native resume commands.
-Subscription-conflicting environment variables and authentication/provider
-overrides are rejected with their names, without printing their values.
+Ambient Codex and Claude API-key/access-token selectors are removed only from
+the launched process environment, so exported credentials for other Terminal
+tools cannot select billing for these subscription commands. The caller's
+environment is unchanged. Missing native logins still stop the launch.
+Explicit API-login/provider options, settings-based authentication overrides,
+and conflicting endpoint/backend environment variables are rejected with their
+names, without printing their values.
 Codex uses file-based native credentials, the built-in OpenAI provider, ChatGPT
 login, and a separate foreground runtime (`--no-daemon`). Claude must report
 first-party `claude.ai` authentication before inference. The launchers do not
